@@ -85,7 +85,10 @@ export async function middleware(request: NextRequest) {
   }
 
   // --- Authentication Check ---
-  const isPublicPath = publicPaths.some(path => pathname === path || pathname.startsWith(path));
+  // Match a public path exactly, or as a prefix on a '/' boundary. A bare
+  // startsWith() let the '/' entry match every pathname, so isPublicPath was
+  // always true and the check below never protected anything.
+  const isPublicPath = publicPaths.some(path => pathname === path || pathname.startsWith(path + '/'));
   const isStaticAsset = pathname.startsWith('/_next') || pathname.startsWith('/static') || pathname.includes('favicon.ico');
 
   if (!user && !isPublicPath && !isStaticAsset) {
