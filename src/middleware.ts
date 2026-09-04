@@ -11,7 +11,6 @@ const publicPaths = [
   '/auth/callback',  // Supabase auth callback
   '/invite',  // For invitation links
   '/api/auth/register', // Keep if still using custom backend registration
-  '/api/auth/login', // Keep if still using custom backend login
   '/api/auth/forgot-password', // Keep for password reset flow
   '/api/auth/reset-password', // Keep for password reset flow
   '/api/invitations',  // Allow checking invitations without auth

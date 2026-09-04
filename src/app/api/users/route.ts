@@ -1,7 +1,6 @@
 // src/app/api/users/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import bcrypt from 'bcrypt';
 
 export async function POST(request: NextRequest) {
   try {
