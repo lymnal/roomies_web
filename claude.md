@@ -121,6 +121,15 @@ npm run check                   # tsc + eslint (strict: no any, no unused vars)
 npm run build
 ```
 
+## Deployment (Vercel)
+- Production: **https://roomies-web-sable.vercel.app** (Vercel project `roomies-web`, team `mech-interp-s-projects`,
+  Hobby plan). Every push to `main` builds and deploys; other branches get preview URLs.
+- The three env vars above live in Vercel for Production + Preview (`npx vercel env ls`). The anon key is stored as a
+  `config` variable on purpose: `NEXT_PUBLIC_` values ship to the browser and RLS is what protects the data.
+- Per-deployment `*-mech-interp-s-projects.vercel.app` URLs sit behind Vercel SSO; use the production domain.
+- Supabase Auth → URL Configuration must list the production domain (Site URL) and `https://roomies-web-sable.vercel.app/**`
+  plus `http://localhost:3000/**` as redirect URLs, or OAuth / email links will bounce back to the wrong host.
+
 ---
 
 ## Technical Debt Tracker
