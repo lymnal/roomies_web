@@ -15,6 +15,14 @@ function str(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+/** First key that is present in the body (null counts as present, unlike `??`). */
+function pick(body: Body, ...keys: string[]): unknown {
+  for (const key of keys) {
+    if (body[key] !== undefined) return body[key];
+  }
+  return undefined;
+}
+
 function num(value: unknown): number {
   if (typeof value === 'number') return value;
   if (typeof value === 'string' && value.trim() !== '') return Number(value);
@@ -48,7 +56,7 @@ export function parseExpenseInput(
   const householdId = str(body.householdId) ?? str(body.household_id) ?? defaults.householdId;
   if (!isUuid(householdId)) throw new HttpError(400, 'householdId is required');
 
-  const title = text(body.title ?? body.description, 'Title', 200, true) as string;
+  const title = text(pick(body, 'title', 'description'), 'Title', 200, true) as string;
 
   const amount = roundCents(num(body.amount));
   if (!Number.isFinite(amount) || amount <= 0) throw new HttpError(400, 'Amount must be a positive number');
@@ -139,25 +147,26 @@ export function parseTaskInput(body: Body, options: { partial: boolean }): TaskI
     }
     input.priority = priority as TaskPriority;
   }
-  if (body.assigneeId !== undefined || body.assignee_id !== undefined) {
-    const assigneeId = body.assigneeId ?? body.assignee_id;
-    if (assigneeId === null || assigneeId === '') {
+  const assigneeRaw = pick(body, 'assigneeId', 'assignee_id');
+  if (assigneeRaw !== undefined) {
+    if (assigneeRaw === null || assigneeRaw === '') {
       input.assigneeId = null;
-    } else if (isUuid(assigneeId)) {
-      input.assigneeId = assigneeId;
+    } else if (isUuid(assigneeRaw)) {
+      input.assigneeId = assigneeRaw;
     } else {
       throw new HttpError(400, 'assigneeId must be a valid user id');
     }
   }
-  const dueDate = parseDueDate(body.dueDate ?? body.due_date);
+  const dueDate = parseDueDate(pick(body, 'dueDate', 'due_date'));
   if (dueDate !== undefined) input.dueDate = dueDate;
 
   if (body.recurring !== undefined) {
     if (typeof body.recurring !== 'boolean') throw new HttpError(400, 'recurring must be true or false');
     input.recurring = body.recurring;
   }
-  if (body.recurrenceRule !== undefined || body.recurrence_rule !== undefined) {
-    const raw = body.recurrenceRule ?? body.recurrence_rule;
+  const ruleRaw = pick(body, 'recurrenceRule', 'recurrence_rule');
+  if (ruleRaw !== undefined) {
+    const raw = ruleRaw;
     if (raw === null || raw === '') {
       input.recurrenceRule = null;
     } else {

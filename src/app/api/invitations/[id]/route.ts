@@ -34,7 +34,10 @@ async function tokenClient(session: SupabaseClient): Promise<SupabaseClient> {
 
 async function findByToken(client: SupabaseClient, token: string): Promise<Invitation | null> {
   const { data, error } = await client.from('invitations').select(INVITATION_SELECT).eq('token', token).maybeSingle();
-  if (error) throw new HttpError(500, 'Failed to load invitation');
+  if (error) {
+    console.error('[api] invitation lookup failed:', error);
+    throw new HttpError(500, 'Failed to load invitation');
+  }
   return data ? toInvitation(data as unknown as InvitationRow) : null;
 }
 

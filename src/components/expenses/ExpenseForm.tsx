@@ -3,6 +3,7 @@
 
 import { useMemo, useState } from 'react';
 import { errorMessage } from '@/lib/api-client';
+import { splitByPercentage, splitEqually, splitsMatchTotal, sumSplits } from '@/lib/splits';
 import { formatCurrency, roundCents, todayISODate } from '@/lib/utils';
 import type { Expense, ExpenseInput, Member } from '@/types';
 import Alert from '@/components/ui/Alert';
@@ -22,37 +23,6 @@ const inputClass =
   'w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white';
 const smallInputClass =
   'w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-600 dark:border-gray-500 dark:text-white disabled:bg-gray-100 dark:disabled:bg-gray-700 disabled:cursor-not-allowed';
-
-/** Split `total` across `ids` so the parts sum to the total exactly (last person absorbs rounding). */
-function splitEqually(total: number, ids: string[]): Record<string, number> {
-  const result: Record<string, number> = {};
-  if (ids.length === 0) return result;
-  const cents = Math.round(total * 100);
-  const base = Math.floor(cents / ids.length);
-  let remainder = cents - base * ids.length;
-  ids.forEach((id) => {
-    const extra = remainder > 0 ? 1 : 0;
-    remainder -= extra;
-    result[id] = (base + extra) / 100;
-  });
-  return result;
-}
-
-function splitByPercentage(total: number, ids: string[], percentages: Record<string, number>): Record<string, number> {
-  const result: Record<string, number> = {};
-  if (ids.length === 0) return result;
-  let allocated = 0;
-  ids.forEach((id, index) => {
-    if (index === ids.length - 1) {
-      result[id] = roundCents(total - allocated);
-    } else {
-      const amount = roundCents((total * (percentages[id] ?? 0)) / 100);
-      result[id] = amount;
-      allocated = roundCents(allocated + amount);
-    }
-  });
-  return result;
-}
 
 function initialSplitType(expense: Expense | null): SplitType {
   if (!expense || expense.splits.length === 0) return 'EQUAL';
@@ -91,9 +61,9 @@ export default function ExpenseForm({ expense, members, householdId, currentUser
     return Object.fromEntries(includedIds.map((id) => [id, roundCents(Number(customAmounts[id]) || 0)]));
   }, [splitType, amount, includedIds, percentages, customAmounts]);
 
-  const splitTotal = roundCents(includedIds.reduce((sum, id) => sum + (computedSplits[id] ?? 0), 0));
+  const splitTotal = sumSplits(includedIds, computedSplits);
   const percentTotal = roundCents(includedIds.reduce((sum, id) => sum + (percentages[id] ?? 0), 0));
-  const totalsMatch = Math.abs(splitTotal - amount) < 0.005;
+  const totalsMatch = splitsMatchTotal(amount, includedIds, computedSplits);
 
   const toggleIncluded = (userId: string) => {
     setIncluded((prev) => (prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]));
@@ -103,9 +73,6 @@ export default function ExpenseForm({ expense, members, householdId, currentUser
     if (!title.trim()) return 'Give the expense a name';
     if (!(amount > 0)) return 'Amount must be greater than 0';
     if (!date) return 'Pick a date';
-    if (!includedIds.includes(paidBy) && splitType !== 'CUSTOM') {
-      // Payer not sharing the cost is fine, but be explicit about it.
-    }
     if (includedIds.length === 0) return 'Select at least one person to split with';
     if (splitType === 'PERCENTAGE' && Math.abs(percentTotal - 100) > 0.05) return 'Percentages must add up to 100%';
     if (!totalsMatch) return `Shares add up to ${formatCurrency(splitTotal)}, but the total is ${formatCurrency(amount)}`;
