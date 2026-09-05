@@ -1,309 +1,112 @@
 // src/lib/chat.ts
-import { supabaseClient } from './supabase';
-import { generateUUID } from '@/lib/utils';
+// Household group chat on top of the `messages` table (RLS: members of the household only).
+import type { RealtimeChannel } from '@supabase/supabase-js';
+import { supabaseClient } from '@/lib/supabase';
+import type { ChatMessage } from '@/types';
 
-// Types
-export interface Message {
+const MESSAGE_SELECT = 'id, household_id, user_id, content, edited, deleted, created_at, sender:profiles!messages_user_id_profiles_fkey(id, name, avatar_url)';
+const PAGE_SIZE = 100;
+
+interface MessageRow {
   id: string;
-  householdId: string;
-  senderId: string;
+  household_id: string;
+  user_id: string;
   content: string;
-  contentType?: string;
+  edited: boolean | null;
+  deleted: boolean | null;
   created_at: string;
-  updated_at: string;
-  sender?: {
-    id: string;
-    name: string;
-    avatar?: string;
+  sender: { id: string; name: string | null; avatar_url: string | null } | { id: string; name: string | null; avatar_url: string | null }[] | null;
+}
+
+function toMessage(row: MessageRow): ChatMessage {
+  const sender = Array.isArray(row.sender) ? row.sender[0] ?? null : row.sender;
+  return {
+    id: row.id,
+    householdId: row.household_id,
+    userId: row.user_id,
+    content: row.content,
+    createdAt: row.created_at,
+    edited: Boolean(row.edited),
+    sender: sender ? { id: sender.id, name: sender.name?.trim() || 'Unknown', avatar: sender.avatar_url } : null,
   };
-  readReceipts?: ReadReceipt[];
 }
 
-export interface ReadReceipt {
-  id: string;
-  messageId: string;
-  userId: string;
-  readAt: string;
+export async function getHouseholdMessages(householdId: string): Promise<ChatMessage[]> {
+  const { data, error } = await supabaseClient
+    .from('messages')
+    .select(MESSAGE_SELECT)
+    .eq('household_id', householdId)
+    .eq('deleted', false)
+    .order('created_at', { ascending: false })
+    .limit(PAGE_SIZE);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as unknown as MessageRow[]).map(toMessage).reverse();
 }
 
-// Get messages for a household
-export async function getHouseholdMessages(householdId: string): Promise<Message[]> {
-  console.log(`Fetching messages for household: ${householdId}`);
-  
-  try {
-    const { data, error } = await supabaseClient
-      .from('messages')
-      .select(`
-        *,
-        sender:senderId(id, name, avatar),
-        readReceipts:MessageReadReceipt(id, userId, readAt)
-      `)
-      .eq('household_id', householdId)
-      .order('created_at', { ascending: true });
-
-    if (error) {
-      console.error('Error fetching messages:', error);
-      return [];
-    }
-
-    console.log(`Retrieved ${data?.length || 0} messages for household ${householdId}`);
-    return data || [];
-  } catch (err) {
-    console.error('Unexpected error fetching messages:', err);
-    return [];
-  }
+export async function getMessage(messageId: string): Promise<ChatMessage | null> {
+  const { data, error } = await supabaseClient.from('messages').select(MESSAGE_SELECT).eq('id', messageId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? toMessage(data as unknown as MessageRow) : null;
 }
 
-// Send a message to a household
-export async function sendMessage(householdId: string, senderId: string, content: string): Promise<Message | null> {
-  // Generate a UUID for the message ID
-  const messageId = generateUUID();
-  const now = new Date().toISOString();
-  
-  console.log(`Sending message with ID: ${messageId} to household: ${householdId}`);
-  
-  try {
-    const { data, error } = await supabaseClient
-      .from('messages')
-      .insert([
-        {
-          id: messageId,
-          householdId,
-          senderId,
-          content,
-          contentType: 'TEXT',
-          created_at: now,
-          updated_at: now
-        }
-      ])
-      .select(`
-        *,
-        sender:senderId(id, name, avatar)
-      `)
-      .single();
-  
-    if (error) {
-      console.error(`Error sending message to household ${householdId}:`, error);
-      // Provide more detailed error information for debugging
-      if (error.code === '42501') {
-        console.error('Permission denied - check RLS policies');
-      } else if (error.code === '23505') {
-        console.error('Duplicate ID - UUID collision');
-      } else if (error.code === '42P01') {
-        console.error('Table does not exist');
-      }
-      return null;
-    }
-  
-    console.log('Message sent successfully:', data);
-    return data;
-  } catch (err) {
-    console.error('Unexpected error sending message:', err);
-    return null;
-  }
+export async function sendMessage(householdId: string, content: string): Promise<ChatMessage> {
+  const trimmed = content.trim();
+  if (!trimmed) throw new Error('Message cannot be empty');
+  if (trimmed.length > 1000) throw new Error('Messages are limited to 1000 characters');
+
+  const {
+    data: { user },
+  } = await supabaseClient.auth.getUser();
+  if (!user) throw new Error('You need to be signed in to send messages');
+
+  const { data, error } = await supabaseClient
+    .from('messages')
+    .insert({ household_id: householdId, user_id: user.id, content: trimmed })
+    .select(MESSAGE_SELECT)
+    .single();
+  if (error) throw new Error(error.message);
+  return toMessage(data as unknown as MessageRow);
 }
 
 /**
- * Send a welcome message when a user joins a household
+ * Subscribe to new messages in a household. The realtime payload has no joined profile, so the
+ * full row is fetched on arrival. Returns an unsubscribe function.
  */
-export async function sendWelcomeMessage(householdId: string, userId: string, userName: string): Promise<Message | null> {
-  const messageId = generateUUID();
-  const now = new Date().toISOString();
-  
-  try {
-    const { data, error } = await supabaseClient
-      .from('messages')
-      .insert([
-        {
-          id: messageId,
-          householdId,
-          senderId: userId, // System or admin user ID
-          content: `👋 ${userName} has joined the household! Say hello!`,
-          contentType: 'TEXT',
-          created_at: now,
-          updated_at: now
-        }
-      ])
-      .select(`*, sender:senderId(id, name, avatar)`)
-      .single();
-  
-    if (error) {
-      console.error(`Error sending welcome message:`, error);
-      return null;
-    }
-  
-    return data;
-  } catch (err) {
-    console.error('Error sending welcome message:', err);
-    return null;
-  }
-}
-
-// Mark message as read
-export async function markMessageAsRead(messageId: string, userId: string): Promise<ReadReceipt | null> {
-  console.log(`Marking message ${messageId} as read by user ${userId}`);
-  
-  try {
-    // Check if a read receipt already exists
-    const { data: existingReceipt, error: receiptError } = await supabaseClient
-      .from('MessageReadReceipt')
-      .select('id, messageId, userId, readAt')
-      .eq('messageId', messageId)
-      .eq('user_id', userId)
-      .single();
-    
-    if (!receiptError && existingReceipt) {
-      // Already marked as read
-      console.log(`Message ${messageId} already marked as read`);
-      return existingReceipt as ReadReceipt;
-    }
-    
-    // Generate a UUID for the receipt
-    const receiptId = generateUUID();
-    
-    // Create a new read receipt
-    const { data, error } = await supabaseClient
-      .from('MessageReadReceipt')
-      .insert([
-        {
-          id: receiptId,
-          messageId,
-          userId,
-          readAt: new Date().toISOString()
-        }
-      ])
-      .select()
-      .single();
-    
-    if (error) {
-      console.error('Error marking message as read:', error);
-      if (error.code === '42501') {
-        console.error('Permission denied - check RLS policies');
-      }
-      return null;
-    }
-    
-    console.log(`Successfully marked message ${messageId} as read`);
-    return data as ReadReceipt;
-  } catch (err) {
-    console.error('Unexpected error marking message as read:', err);
-    return null;
-  }
-}
-
-// Get unread messages count for user in a household
-export async function getUnreadMessagesCount(householdId: string, userId: string): Promise<number> {
-  console.log(`Calculating unread messages for user ${userId} in household ${householdId}`);
-  
-  try {
-    // Get all messages for the household
-    const { data: messages, error: messagesError } = await supabaseClient
-      .from('messages')
-      .select('id')
-      .eq('household_id', householdId)
-      .neq('senderId', userId); // Exclude messages sent by the current user
-    
-    if (messagesError || !messages) {
-      console.error('Error fetching messages for unread count:', messagesError);
-      return 0;
-    }
-    
-    if (messages.length === 0) {
-      return 0;
-    }
-    
-    // Get read receipts for these messages
-    const messageIds = messages.map((msg: { id: string }) => msg.id);
-    const { data: receipts, error: receiptsError } = await supabaseClient
-      .from('MessageReadReceipt')
-      .select('messageId')
-      .eq('user_id', userId)
-      .in('messageId', messageIds);
-
-    if (receiptsError) {
-      console.error('Error fetching read receipts:', receiptsError);
-      return 0;
-    }
-
-    // Count unread messages
-    const readMessageIds = receipts?.map((receipt: { messageId: string }) => receipt.messageId) || [];
-    const unreadCount = messages.filter((msg: { id: string }) => !readMessageIds.includes(msg.id)).length;
-    
-    console.log(`User ${userId} has ${unreadCount} unread messages in household ${householdId}`);
-    return unreadCount;
-  } catch (err) {
-    console.error('Unexpected error getting unread count:', err);
-    return 0;
-  }
-}
-
-export function subscribeToMessages(householdId: string, callback: (message: Message) => void) {
-    console.log(`Setting up message subscription for household: ${householdId}`);
-    
-    try {
-      // Use a unique channel name that includes the household ID
-      const channel = supabaseClient
-        .channel(`messages-${householdId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'Message',
-            filter: `householdId=eq.${householdId}`
-          },
-          async (payload: { new: Record<string, unknown>; old: Record<string, unknown> }) => {
-            console.log('Subscription received new message:', payload);
-            const newRecord = payload.new;
-            if (!newRecord || !newRecord.id) return;
-
-            // Fetch the complete message with sender information
-            try {
-              const { data, error } = await supabaseClient
-                .from('messages')
-                .select(`
-                  *,
-                  sender:senderId(id, name, avatar)
-                `)
-                .eq('id', newRecord.id as string)
-                .single();
-
-              if (!error && data) {
-                console.log('Complete message data:', data);
-                callback(data as Message);
-              } else {
-                // Log error but still use the payload data
-                console.error('Error fetching complete message:', error);
-                // Convert the payload to match the Message interface as closely as possible
-                const simpleMessage: Message = {
-                  id: newRecord.id as string,
-                  householdId: newRecord.householdId as string,
-                  senderId: newRecord.senderId as string,
-                  content: newRecord.content as string,
-                  contentType: (newRecord.contentType as string) || 'TEXT',
-                  created_at: (newRecord.createdAt as string) || new Date().toISOString(),
-                  updated_at: (newRecord.updatedAt as string) || new Date().toISOString()
-                };
-                callback(simpleMessage);
-              }
-            } catch (err) {
-              console.error('Error in subscription callback:', err);
-              // Still try to use the payload even if the fetch fails
-              callback(newRecord as unknown as Message);
-            }
+export function subscribeToMessages(householdId: string, onMessage: (message: ChatMessage) => void): () => void {
+  const channel: RealtimeChannel = supabaseClient
+    .channel(`messages:${householdId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages', filter: `household_id=eq.${householdId}` },
+      async (payload) => {
+        const row = payload.new as Partial<MessageRow>;
+        if (!row?.id) return;
+        try {
+          const full = await getMessage(row.id);
+          if (full) {
+            onMessage(full);
+            return;
           }
-        )
-        .subscribe((status: string) => {
-          console.log(`Subscription status for household ${householdId}:`, status);
-        });
-    
-      return () => {
-        console.log(`Removing subscription for household: ${householdId}`);
-        supabaseClient.removeChannel(channel);
-      };
-    } catch (error) {
-      console.error('Error setting up message subscription:', error);
-      // Return a no-op cleanup function
-      return () => {};
-    }
+        } catch {
+          // fall through to the bare payload
+        }
+        onMessage(
+          toMessage({
+            id: row.id,
+            household_id: row.household_id ?? householdId,
+            user_id: row.user_id ?? '',
+            content: row.content ?? '',
+            edited: row.edited ?? false,
+            deleted: row.deleted ?? false,
+            created_at: row.created_at ?? new Date().toISOString(),
+            sender: null,
+          })
+        );
+      }
+    )
+    .subscribe();
+
+  return () => {
+    void supabaseClient.removeChannel(channel);
+  };
 }

@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Roomies
 
-## Getting Started
+Shared-living coordination for roommates: split expenses with a proper ledger, assign tasks, invite roommates, and chat — all per household.
 
-First, run the development server:
+Next.js 15 (App Router) · React 19 · Tailwind · Supabase (Postgres + Auth + Realtime + Storage)
+
+## Getting started
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local   # fill in the Supabase URL / keys
+npm install
+npm run dev                  # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| Variable | Required | Purpose |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | yes | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | Public anon key (RLS applies) |
+| `SUPABASE_SERVICE_ROLE_KEY` | recommended | Server-only. Account deletion and invitation lookups for people who are not signed in yet |
+| `NEXT_PUBLIC_APP_URL` | no | Origin used in invitation links (defaults to the request origin) |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+`npm run check` runs the type checker and the linter; `npm run build` produces the production bundle.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## How it fits together
 
-## Learn More
+- **Auth**: Supabase Auth (email/password + Google). The `on_auth_user_created` trigger creates the `profiles` row. The middleware validates the session on every request and redirects to `/login`; API routes re-check with `withAuth` / `withAuthParams` (`src/lib/supabase-server.ts`).
+- **Households**: created with `web_create_household` (creator becomes admin, a join code is generated). Roommates join with the code (`join_household_by_code`) or an invitation link (`/invite?token=…`).
+- **Money**: every expense, settlement and edit is posted to `ledger_entries` (immutable; corrections are reversal rows). Balances come from `get_household_balances_simple`. The RPCs the web app uses live in `supabase/migrations/20260905000100_web_ledger_rpcs.sql` and all check `auth.uid()` membership.
+- **Tasks**: the `tasks` table (not the chores engine, which other clients use).
+- **Chat**: `messages` table + Realtime.
+- **Authorization**: RLS on every table, plus explicit checks in the API routes. `SECURITY DEFINER` functions are not executable by `anon`, and household-scoped ones assert membership (`web_assert_member`).
 
-To learn more about Next.js, take a look at the following resources:
+### Layout
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+src/
+├── app/                # routes (pages under (auth) and (dashboard), API under api/)
+├── components/         # UI by feature
+├── context/            # AuthContext, HouseholdContext (current household + switcher)
+├── lib/
+│   ├── supabase.ts         browser client
+│   ├── supabase-server.ts  server client, withAuth, error helpers
+│   ├── supabase-admin.ts   service-role client (server only)
+│   ├── serializers.ts      DB rows → API shapes
+│   ├── validation.ts       request body validation
+│   ├── queries.ts          shared server reads
+│   └── services/           client-side API wrappers
+└── types/              # API types (camelCase)
+supabase/migrations/    # SQL applied to the hosted project (keep in sync)
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Database changes
 
-## Deploy on Vercel
+Apply new SQL through the Supabase MCP / SQL editor **and** add the file under `supabase/migrations/` so the repo stays the source of truth. Run the Supabase security advisor afterwards.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Two items can only be done in the Supabase dashboard: enable leaked-password protection (Authentication → Settings) and upgrade Postgres (Settings → Infrastructure).

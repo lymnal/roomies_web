@@ -1,203 +1,107 @@
 // src/components/invitations/PendingInvitations.tsx
+// A household's outstanding invitations (admin view) with copy-link and cancel.
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { errorMessage } from '@/lib/api-client';
+import { cancelInvitation, fetchHouseholdInvitations } from '@/lib/services/invitations';
 import { formatDate } from '@/lib/utils';
+import type { Invitation } from '@/types';
 import Button from '@/components/ui/Button';
-
-interface Invitation {
-  id: string;
-  email: string;
-  role: string;
-  status: string;
-  message?: string;
-  expires_at: string;
-  created_at: string;
-  inviter?: {
-    id: string;
-    name: string;
-    email: string;
-    avatar?: string;
-  };
-}
+import Alert from '@/components/ui/Alert';
 
 interface PendingInvitationsProps {
   householdId: string;
   onRefresh?: () => void;
 }
 
-export default function PendingInvitations({ 
-  householdId,
-  onRefresh
-}: PendingInvitationsProps) {
+export default function PendingInvitations({ householdId, onRefresh }: PendingInvitationsProps) {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [isResending, setIsResending] = useState<Record<string, boolean>>({});
-  const [isCanceling, setIsCanceling] = useState<Record<string, boolean>>({});
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchInvitations();
-  }, [householdId]);
-
-  const fetchInvitations = async () => {
+  const load = useCallback(async () => {
     try {
-      setLoading(true);
       setError('');
-      
-      const response = await fetch(`/api/invitations?householdId=${householdId}&status=PENDING`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch invitations');
-      }
-      
-      const data = await response.json();
-      setInvitations(data);
+      setInvitations(await fetchHouseholdInvitations(householdId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(errorMessage(err, 'Failed to load invitations'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [householdId]);
 
-  const handleResendInvitation = async (invitationId: string) => {
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const copyLink = async (invitation: Invitation) => {
+    if (!invitation.token) return;
     try {
-      setIsResending(prev => ({ ...prev, [invitationId]: true }));
-      
-      // Make actual API call to resend invitation
-      const response = await fetch(`/api/invitations/${invitationId}/resend`, {
-        method: 'POST',
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || 'Failed to resend invitation');
-      }
-      
-      // Show success notification
-      alert('Invitation has been resent successfully!');
-      
-      // Refresh the list
-      await fetchInvitations();
-      
-      if (onRefresh) {
-        onRefresh();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to resend invitation');
-    } finally {
-      setIsResending(prev => ({ ...prev, [invitationId]: false }));
+      await navigator.clipboard.writeText(`${window.location.origin}/invite?token=${invitation.token}`);
+      setCopiedId(invitation.id);
+      setTimeout(() => setCopiedId(null), 1500);
+    } catch {
+      // ignore
     }
   };
 
-  const handleCancelInvitation = async (invitationId: string) => {
-    if (!confirm('Are you sure you want to cancel this invitation?')) {
-      return;
-    }
-    
+  const cancel = async (invitation: Invitation) => {
+    if (!window.confirm(`Cancel the invitation for ${invitation.email}?`)) return;
+    setBusyId(invitation.id);
+    setError('');
     try {
-      setIsCanceling(prev => ({ ...prev, [invitationId]: true }));
-      
-      // Make actual API call to cancel invitation
-      const response = await fetch(`/api/invitations/${invitationId}`, {
-        method: 'DELETE',
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || 'Failed to cancel invitation');
-      }
-      
-      // Remove the invitation from the list
-      setInvitations(prev => prev.filter(inv => inv.id !== invitationId));
-      
-      if (onRefresh) {
-        onRefresh();
-      }
+      await cancelInvitation(invitation.id);
+      setInvitations((prev) => prev.filter((inv) => inv.id !== invitation.id));
+      onRefresh?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to cancel invitation');
+      setError(errorMessage(err, 'Failed to cancel invitation'));
     } finally {
-      setIsCanceling(prev => ({ ...prev, [invitationId]: false }));
+      setBusyId(null);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="py-4 text-center text-gray-500 dark:text-gray-400">
-        Loading invitations...
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-4 bg-red-50 dark:bg-red-900 text-red-700 dark:text-red-300 rounded-md">
-        Error: {error}
-      </div>
-    );
-  }
-
-  if (invitations.length === 0) {
-    return (
-      <div className="py-4 text-center text-gray-500 dark:text-gray-400">
-        No pending invitations
-      </div>
-    );
-  }
+  if (loading) return <div className="py-4 text-center text-gray-500 dark:text-gray-400">Loading invitations…</div>;
 
   return (
     <div className="space-y-4">
-      {invitations.map(invitation => (
-        <div 
-          key={invitation.id} 
-          className="p-4 bg-white dark:bg-gray-800 rounded-md shadow border border-gray-200 dark:border-gray-700"
-        >
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center">
-                <h3 className="font-medium text-gray-900 dark:text-white">{invitation.email}</h3>
-                <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
-                  Pending
-                </span>
-              </div>
-              
-              <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                <p>Role: {invitation.role.charAt(0) + invitation.role.slice(1).toLowerCase()}</p>
-                <p>Sent: {formatDate(invitation.created_at, true)}</p>
-                <p>Expires: {formatDate(invitation.expires_at)}</p>
-              </div>
-              
-              {invitation.message && (
-                <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-700 rounded text-sm italic text-gray-600 dark:text-gray-300">
-                  "{invitation.message}"
+      {error && (
+        <Alert kind="error" onDismiss={() => setError('')}>
+          {error}
+        </Alert>
+      )}
+      {invitations.length === 0 ? (
+        <div className="py-4 text-center text-gray-500 dark:text-gray-400">No pending invitations</div>
+      ) : (
+        invitations.map((invitation) => (
+          <div key={invitation.id} className="p-4 bg-white dark:bg-gray-800 rounded-md shadow border border-gray-200 dark:border-gray-700">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-medium text-gray-900 dark:text-white truncate">{invitation.email}</h3>
+                  <span className="px-2 py-0.5 text-xs rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">Pending</span>
                 </div>
-              )}
-            </div>
-            
-            <div className="flex sm:flex-col gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                isLoading={isResending[invitation.id]}
-                disabled={isResending[invitation.id] || isCanceling[invitation.id]}
-                onClick={() => handleResendInvitation(invitation.id)}
-              >
-                Resend
-              </Button>
-              
-              <Button
-                size="sm"
-                variant="danger"
-                isLoading={isCanceling[invitation.id]}
-                disabled={isResending[invitation.id] || isCanceling[invitation.id]}
-                onClick={() => handleCancelInvitation(invitation.id)}
-              >
-                Cancel
-              </Button>
+                <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  <p>Role: {invitation.role}</p>
+                  <p>Sent: {formatDate(invitation.createdAt, true)}</p>
+                  <p>Expires: {formatDate(invitation.expiresAt)}</p>
+                </div>
+                {invitation.message && <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-700 rounded text-sm italic text-gray-600 dark:text-gray-300">&ldquo;{invitation.message}&rdquo;</div>}
+              </div>
+              <div className="flex sm:flex-col gap-2">
+                <Button size="sm" variant="outline" disabled={!invitation.token} onClick={() => void copyLink(invitation)}>
+                  {copiedId === invitation.id ? 'Copied' : 'Copy link'}
+                </Button>
+                <Button size="sm" variant="danger" isLoading={busyId === invitation.id} disabled={busyId !== null} onClick={() => void cancel(invitation)}>
+                  Cancel
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        ))
+      )}
     </div>
   );
 }

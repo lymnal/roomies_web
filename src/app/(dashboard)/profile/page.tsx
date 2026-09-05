@@ -1,522 +1,272 @@
 // src/app/(dashboard)/profile/page.tsx
 'use client';
 
-import { useState, useEffect, ChangeEvent } from 'react';
-import Image from 'next/image';
-import { useRouter } from 'next/navigation';
+import { ChangeEvent, useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { supabaseClient } from '@/lib/supabase';
+import { apiFetch, errorMessage } from '@/lib/api-client';
+import { formatDate } from '@/lib/utils';
+import Avatar from '@/components/ui/Avatar';
+import Alert from '@/components/ui/Alert';
+import Card from '@/components/ui/Card';
+import { FullPageSpinner } from '@/components/ui/Spinner';
+
+interface Me {
+  id: string;
+  name: string | null;
+  email: string | null;
+  avatar: string | null;
+  phone: string | null;
+  createdAt: string;
+  statistics: { expensesPaid: number; unsettledShares: number };
+  households: { id: string; name: string; address: string | null; joinedAt: string; role: 'admin' | 'member' }[];
+}
+
+const inputClass =
+  'w-full px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white border-gray-300';
 
 export default function ProfilePage() {
-  const { user, isLoading } = useAuth();
-  const router = useRouter();
-  
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    currentPassword: '',
-    newPassword: '',
-    confirmPassword: '',
-  });
-  
+  const { user, isLoading, signOut } = useAuth();
+  const [me, setMe] = useState<Me | null>(null);
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
   const [avatar, setAvatar] = useState<string | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [isChangingPassword, setIsChangingPassword] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  
-  // Initialize form data from user
+
   useEffect(() => {
-    if (user) {
-      setFormData({
-        ...formData,
-        name: (user.user_metadata?.name as string) || '',
-        email: user.email || '',
-      });
-      setAvatar((user.user_metadata?.avatar_url as string) || null);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-  
-  // Handle input changes
-  const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFormData({
-      ...formData,
-      [name]: value,
-    });
-    
-    // Clear any error/success messages when user starts typing
-    if (error) setError('');
-    if (success) setSuccess('');
+    apiFetch<Me>('/api/users/me')
+      .then((data) => {
+        setMe(data);
+        setName(data.name ?? '');
+        setPhone(data.phone ?? '');
+        setAvatar(data.avatar);
+      })
+      .catch((err) => setError(errorMessage(err, 'Failed to load your profile')));
+  }, []);
+
+  const flash = (message: string) => {
+    setSuccess(message);
+    setTimeout(() => setSuccess(''), 4000);
   };
-  
-  // Handle avatar upload
-  const handleAvatarChange = (e: ChangeEvent<HTMLInputElement>) => {
+
+  const handleProfileSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setIsSaving(true);
+    try {
+      const updated = await apiFetch<{ name: string; phone: string | null }>('/api/users/me', { method: 'PATCH', json: { name: name.trim(), phone } });
+      setMe((prev) => (prev ? { ...prev, name: updated.name, phone: updated.phone } : prev));
+      flash('Profile updated');
+    } catch (err) {
+      setError(errorMessage(err, 'Failed to update profile'));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleAvatarChange = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    
-    // Check file size (max 2MB)
+    e.target.value = '';
+    if (!file || !user) return;
     if (file.size > 2 * 1024 * 1024) {
-      setError('Image size must be less than 2MB');
+      setError('Image must be smaller than 2 MB');
       return;
     }
-    
-    // Check file type
     if (!file.type.startsWith('image/')) {
       setError('Only image files are allowed');
       return;
     }
-    
-    // Create a preview URL for the image
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      if (e.target?.result) {
-        setAvatar(e.target.result as string);
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-  
-  // Handle profile update
-  const handleProfileUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
     setError('');
-    setSuccess('');
-    
+    setUploading(true);
     try {
-      if (!user) throw new Error('User not authenticated');
-      
-      // Update the user metadata in Supabase Auth
-      const { error: updateError } = await supabaseClient.auth.updateUser({
-        data: {
-          name: formData.name,
-        }
-      });
-      
-      if (updateError) throw updateError;
-      
-      // Update the user record in the database
-      const { error: dbError } = await supabaseClient
-        .from('profiles')
-        .update({
-          name: formData.name,
-          avatar: avatar,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', user.id);
-      
-      if (dbError) throw dbError;
-      
-      setSuccess('Profile updated successfully!');
-      setIsEditing(false);
+      const extension = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+      const path = `${user.id}/avatar-${Date.now()}.${extension}`;
+      const { error: uploadError } = await supabaseClient.storage.from('avatars').upload(path, file, { upsert: true, contentType: file.type });
+      if (uploadError) throw uploadError;
+      const {
+        data: { publicUrl },
+      } = supabaseClient.storage.from('avatars').getPublicUrl(path);
+
+      const { error: profileError } = await supabaseClient.from('profiles').update({ avatar_url: publicUrl, updated_at: new Date().toISOString() }).eq('id', user.id);
+      if (profileError) throw profileError;
+      await supabaseClient.auth.updateUser({ data: { avatar_url: publicUrl } });
+      setAvatar(publicUrl);
+      flash('Photo updated');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred while updating your profile');
+      setError(errorMessage(err, 'Failed to upload photo'));
     } finally {
-      setIsSubmitting(false);
+      setUploading(false);
     }
   };
-  
-  // Handle password change
+
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSubmitting(true);
     setError('');
-    setSuccess('');
-    
-    // Validate passwords
-    if (formData.newPassword !== formData.confirmPassword) {
+    if (newPassword !== confirmPassword) {
       setError('New passwords do not match');
-      setIsSubmitting(false);
       return;
     }
-    
-    if (formData.newPassword.length < 8) {
+    if (newPassword.length < 8) {
       setError('Password must be at least 8 characters long');
-      setIsSubmitting(false);
       return;
     }
-    
+    setChangingPassword(true);
     try {
-      // Update password with Supabase Auth
-      const { error } = await supabaseClient.auth.updateUser({
-        password: formData.newPassword
-      });
-      
-      if (error) throw error;
-      
-      setSuccess('Password changed successfully!');
-      setFormData({
-        ...formData,
-        currentPassword: '',
-        newPassword: '',
-        confirmPassword: '',
-      });
-      setIsChangingPassword(false);
+      const { error: updateError } = await supabaseClient.auth.updateUser({ password: newPassword });
+      if (updateError) throw updateError;
+      setNewPassword('');
+      setConfirmPassword('');
+      flash('Password changed');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred while changing your password');
+      setError(errorMessage(err, 'Failed to change password'));
     } finally {
-      setIsSubmitting(false);
+      setChangingPassword(false);
     }
   };
-  
-  // Delete account
+
   const handleDeleteAccount = async () => {
-    if (window.confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-      try {
-        if (!user) throw new Error('User not authenticated');
-        
-        // In a real application, you would call an API to handle account deletion
-        // This would need admin/service level access to delete the user
-        const response = await fetch('/api/users/me', {
-          method: 'DELETE',
-        });
-        
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || 'Failed to delete account');
-        }
-        
-        // Sign out using Supabase Auth
-        await supabaseClient.auth.signOut();
-        
-        // Redirect to the login page
-        router.push('/login');
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'An error occurred while deleting your account');
-      }
+    if (!window.confirm('Delete your account? This removes your profile and memberships and cannot be undone.')) return;
+    setError('');
+    try {
+      await apiFetch('/api/users/me', { method: 'DELETE' });
+      await signOut();
+    } catch (err) {
+      setError(errorMessage(err, 'Failed to delete account'));
     }
   };
-  
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
-  
+
+  if (isLoading || !user) return <FullPageSpinner />;
+
+  const displayName = me?.name || (user.user_metadata?.name as string | undefined) || user.email || 'You';
+
   return (
-    <div className="container mx-auto py-6 px-4">
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Account Settings</h1>
-      
+    <div className="container mx-auto py-2">
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Your profile</h1>
+
+      {success && (
+        <Alert kind="success" className="mb-4" onDismiss={() => setSuccess('')}>
+          {success}
+        </Alert>
+      )}
+      {error && (
+        <Alert kind="error" className="mb-4" onDismiss={() => setError('')}>
+          {error}
+        </Alert>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left sidebar with avatar and account info */}
-        <div className="lg:col-span-1">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-            <div className="flex flex-col items-center">
-              <div className="relative mb-4">
-                {avatar ? (
-                  <Image 
-                    src={avatar} 
-                    alt={formData.name || 'User'} 
-                    width={120} 
-                    height={120} 
-                    className="rounded-full object-cover"
-                  />
-                ) : (
-                  <div className="bg-gray-200 dark:bg-gray-700 h-32 w-32 rounded-full flex items-center justify-center text-gray-600 dark:text-gray-200 text-2xl font-medium">
-                    {formData.name ? formData.name.charAt(0).toUpperCase() : 'U'}
-                  </div>
-                )}
-                
-                {isEditing && (
-                  <div className="absolute bottom-0 right-0">
-                    <label 
-                      htmlFor="avatar-upload" 
-                      className="bg-blue-600 text-white p-2 rounded-full cursor-pointer hover:bg-blue-700"
-                    >
-                      <svg 
-                        className="h-5 w-5" 
-                        fill="none" 
-                        viewBox="0 0 24 24" 
-                        stroke="currentColor"
-                      >
-                        <path 
-                          strokeLinecap="round" 
-                          strokeLinejoin="round" 
-                          strokeWidth={2} 
-                          d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" 
-                        />
-                        <path 
-                          strokeLinecap="round" 
-                          strokeLinejoin="round" 
-                          strokeWidth={2} 
-                          d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" 
-                        />
-                      </svg>
-                      <input 
-                        id="avatar-upload" 
-                        type="file" 
-                        accept="image/*" 
-                        className="hidden" 
-                        onChange={handleAvatarChange}
-                      />
-                    </label>
-                  </div>
-                )}
-              </div>
-              
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">{(user?.user_metadata?.name as string) || user?.email?.split('@')[0] || 'User'}</h2>
-              <p className="text-gray-500 dark:text-gray-400">{user?.email}</p>
-              
-              <div className="mt-6 w-full">
-                <div className="space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-600 dark:text-gray-300">Account created</span>
-                    <span className="text-sm font-medium text-gray-900 dark:text-white">
-                      {new Date().toLocaleDateString()} {/* This would come from user data */}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-600 dark:text-gray-300">Role</span>
-                    <span className="text-sm font-medium text-gray-900 dark:text-white">
-                      Member {/* This would come from user data */}
-                    </span>
-                  </div>
+        <div className="lg:col-span-1 space-y-6">
+          <Card>
+            <div className="flex flex-col items-center text-center">
+              <Avatar src={avatar} name={displayName} size={120} />
+              <label className="mt-3 text-sm text-blue-600 dark:text-blue-400 cursor-pointer hover:underline">
+                {uploading ? 'Uploading…' : 'Change photo'}
+                <input type="file" accept="image/*" className="hidden" onChange={(e) => void handleAvatarChange(e)} disabled={uploading} />
+              </label>
+              <h2 className="mt-4 text-xl font-bold text-gray-900 dark:text-white">{displayName}</h2>
+              <p className="text-gray-500 dark:text-gray-400">{user.email}</p>
+              <dl className="mt-6 w-full space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <dt className="text-gray-600 dark:text-gray-300">Member since</dt>
+                  <dd className="font-medium text-gray-900 dark:text-white">{formatDate(me?.createdAt ?? user.created_at)}</dd>
                 </div>
-                
-                <div className="mt-6">
-                  <button
-                    onClick={() => setIsChangingPassword(prev => !prev)}
-                    className="text-sm text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300"
-                  >
-                    Change password
-                  </button>
+                <div className="flex justify-between">
+                  <dt className="text-gray-600 dark:text-gray-300">Expenses paid</dt>
+                  <dd className="font-medium text-gray-900 dark:text-white">{me?.statistics.expensesPaid ?? '…'}</dd>
                 </div>
-                
-                <div className="mt-2">
-                  <button
-                    onClick={handleDeleteAccount}
-                    className="text-sm text-red-600 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300"
-                  >
-                    Delete account
-                  </button>
+                <div className="flex justify-between">
+                  <dt className="text-gray-600 dark:text-gray-300">Unsettled shares</dt>
+                  <dd className="font-medium text-gray-900 dark:text-white">{me?.statistics.unsettledShares ?? '…'}</dd>
                 </div>
-              </div>
+              </dl>
             </div>
-          </div>
+          </Card>
+
+          <Card title="Households">
+            {!me ? (
+              <p className="text-sm text-gray-500">Loading…</p>
+            ) : me.households.length === 0 ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400">You are not in a household yet.</p>
+            ) : (
+              <ul className="space-y-3">
+                {me.households.map((h) => (
+                  <li key={h.id} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700 p-3 rounded-md">
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 dark:text-white truncate">{h.name}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Joined {formatDate(h.joinedAt)}</p>
+                    </div>
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 capitalize">{h.role}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
         </div>
-        
-        {/* Main content with profile form */}
-        <div className="lg:col-span-2">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-              <h2 className="text-lg font-medium text-gray-900 dark:text-white">Profile Information</h2>
-              
-              {!isEditing ? (
-                <button
-                  onClick={() => setIsEditing(true)}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  Edit Profile
+
+        <div className="lg:col-span-2 space-y-6">
+          <Card title="Profile information">
+            <form onSubmit={handleProfileSave} className="space-y-4">
+              <div>
+                <label htmlFor="name" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Full name
+                </label>
+                <input id="name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} className={inputClass} />
+              </div>
+              <div>
+                <label htmlFor="phone" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Phone <span className="text-gray-400">(optional, visible to your household)</span>
+                </label>
+                <input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} maxLength={30} className={inputClass} />
+              </div>
+              <div>
+                <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Email address
+                </label>
+                <input id="email" value={user.email ?? ''} readOnly className={`${inputClass} bg-gray-50 dark:bg-gray-800 text-gray-500`} />
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Email changes go through your sign-in provider.</p>
+              </div>
+              <div className="flex justify-end">
+                <button type="submit" disabled={isSaving || !name.trim()} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
+                  {isSaving ? 'Saving…' : 'Save changes'}
                 </button>
-              ) : (
-                <button
-                  onClick={() => setIsEditing(false)}
-                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-                >
-                  Cancel
+              </div>
+            </form>
+          </Card>
+
+          <Card title="Change password">
+            <form onSubmit={handlePasswordChange} className="space-y-4">
+              <div>
+                <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  New password
+                </label>
+                <input id="newPassword" type="password" autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required minLength={8} className={inputClass} />
+              </div>
+              <div>
+                <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Confirm new password
+                </label>
+                <input id="confirmPassword" type="password" autoComplete="new-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required className={inputClass} />
+              </div>
+              <div className="flex justify-end">
+                <button type="submit" disabled={changingPassword} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
+                  {changingPassword ? 'Changing…' : 'Change password'}
                 </button>
-              )}
-            </div>
-            
-            {/* Success and error messages */}
-            {success && (
-              <div className="m-6 p-3 bg-green-50 dark:bg-green-900 text-green-800 dark:text-green-200 rounded-md">
-                {success}
               </div>
-            )}
-            
-            {error && (
-              <div className="m-6 p-3 bg-red-50 dark:bg-red-900 text-red-800 dark:text-red-200 rounded-md">
-                {error}
-              </div>
-            )}
-            
-            <div className="p-6">
-              {/* Profile Information Form */}
-              {!isChangingPassword ? (
-                <form onSubmit={handleProfileUpdate}>
-                  <div className="space-y-4">
-                    <div>
-                      <label htmlFor="name" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Full Name
-                      </label>
-                      <input
-                        id="name"
-                        name="name"
-                        type="text"
-                        value={formData.name}
-                        onChange={handleInputChange}
-                        readOnly={!isEditing}
-                        className={`w-full px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white ${
-                          isEditing ? 'border-gray-300' : 'border-transparent bg-gray-50 dark:bg-gray-800'
-                        }`}
-                      />
-                    </div>
-                    
-                    <div>
-                      <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Email Address
-                      </label>
-                      <input
-                        id="email"
-                        name="email"
-                        type="email"
-                        value={formData.email}
-                        onChange={handleInputChange}
-                        readOnly={true} // Email can't be changed through profile for Supabase Auth
-                        className={`w-full px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white border-transparent bg-gray-50 dark:bg-gray-800`}
-                      />
-                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                        Email address cannot be changed directly. Please contact support if you need to change it.
-                      </p>
-                    </div>
-                    
-                    {isEditing && (
-                      <div className="flex justify-end">
-                        <button
-                          type="submit"
-                          disabled={isSubmitting}
-                          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {isSubmitting ? 'Saving...' : 'Save Changes'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </form>
-              ) : (
-                /* Password Change Form */
-                <form onSubmit={handlePasswordChange}>
-                  <div className="space-y-4">
-                    <div>
-                      <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        New Password
-                      </label>
-                      <input
-                        id="newPassword"
-                        name="newPassword"
-                        type="password"
-                        value={formData.newPassword}
-                        onChange={handleInputChange}
-                        required
-                        minLength={8}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                      />
-                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                        Must be at least 8 characters
-                      </p>
-                    </div>
-                    
-                    <div>
-                      <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Confirm New Password
-                      </label>
-                      <input
-                        id="confirmPassword"
-                        name="confirmPassword"
-                        type="password"
-                        value={formData.confirmPassword}
-                        onChange={handleInputChange}
-                        required
-                        className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                      />
-                    </div>
-                    
-                    <div className="flex justify-end space-x-3">
-                      <button
-                        type="button"
-                        onClick={() => setIsChangingPassword(false)}
-                        className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={isSubmitting}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isSubmitting ? 'Changing...' : 'Change Password'}
-                      </button>
-                    </div>
-                  </div>
-                </form>
-              )}
-            </div>
-          </div>
-          
-          {/* Household Information (Optional Section) */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden mt-6">
-            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-              <h2 className="text-lg font-medium text-gray-900 dark:text-white">Household Membership</h2>
-            </div>
-            
-            <div className="p-6">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-700 p-4 rounded-md">
-                  <div>
-                    <h3 className="font-medium text-gray-900 dark:text-white">123 College Avenue</h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Joined August 15, 2023</p>
-                  </div>
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                    Admin
-                  </span>
-                </div>
-                
-                <p className="text-sm text-gray-700 dark:text-gray-300">
-                  To join another household, you will need to be invited by an existing member.
-                </p>
-              </div>
-            </div>
-          </div>
-          
-          {/* Notification Preferences (Optional Section) */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden mt-6">
-            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-              <h2 className="text-lg font-medium text-gray-900 dark:text-white">Notification Preferences</h2>
-            </div>
-            
-            <div className="p-6">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-medium text-gray-900 dark:text-white">Email Notifications</h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Receive updates via email</p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" defaultChecked />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-                  </label>
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-medium text-gray-900 dark:text-white">Expense Reminders</h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Get notified about pending expenses</p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" defaultChecked />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-                  </label>
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-medium text-gray-900 dark:text-white">Task Assignment</h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Notifications when you're assigned a task</p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" defaultChecked />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-                  </label>
-                </div>
-              </div>
-            </div>
-          </div>
+            </form>
+          </Card>
+
+          <Card title="Danger zone">
+            <p className="text-sm text-gray-600 dark:text-gray-300">Deleting your account removes your profile and household memberships. Expenses you paid for stay in your households&apos; ledgers.</p>
+            <button type="button" onClick={() => void handleDeleteAccount()} className="mt-4 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">
+              Delete account
+            </button>
+          </Card>
         </div>
       </div>
     </div>

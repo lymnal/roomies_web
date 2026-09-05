@@ -1,84 +1,46 @@
 // src/app/api/payments/mark-complete/route.ts
-// Records a direct settlement payment between users
-import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
-import { cookies } from 'next/headers';
+// Record a direct settlement between two members (e.g. "Alex paid Sam $20"). Goes through
+// create_settlement_simple so the ledger balances move.
+import { NextResponse } from 'next/server';
+import { withAuth, errorResponse, dbErrorResponse, readJson, requireMembership, isUuid, HttpError } from '@/lib/supabase-server';
+import { roundCents } from '@/lib/utils';
 
-async function createSupabaseRouteHandlerClient() {
-  const cookieStore = await cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-        set(name: string, value: string, options: CookieOptions) {
-          try { cookieStore.set({ name, value, ...options }); } catch (error) { console.error("Error setting cookie:", name, error); }
-        },
-        remove(name: string, options: CookieOptions) {
-          try { cookieStore.set({ name, value: '', ...options }); } catch (error) { console.error("Error removing cookie:", name, error); }
-        },
-      },
-    }
-  );
+interface SettlementResult {
+  success: boolean;
+  error?: string;
+  settlement_id?: string;
 }
 
-export async function POST(request: NextRequest) {
-  const supabase = await createSupabaseRouteHandlerClient();
+// POST /api/payments/mark-complete { householdId, fromUserId, toUserId, amount, description? }
+export const POST = withAuth(async (request, { user, supabase }) => {
+  const body = await readJson(request);
+  const householdId = body.householdId ?? body.household_id;
+  const fromUserId = body.fromUserId ?? body.payerId;
+  const toUserId = body.toUserId ?? body.payeeId;
+  const amount = roundCents(typeof body.amount === 'number' ? body.amount : Number(body.amount));
+  const description = typeof body.description === 'string' ? body.description.trim().slice(0, 200) : '';
 
-  try {
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError) throw new Error(sessionError.message);
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+  if (!isUuid(householdId)) throw new HttpError(400, 'householdId is required');
+  if (!isUuid(fromUserId) || !isUuid(toUserId)) throw new HttpError(400, 'fromUserId and toUserId are required');
+  if (fromUserId === toUserId) throw new HttpError(400, 'Payer and payee must be different people');
+  if (!Number.isFinite(amount) || amount <= 0) throw new HttpError(400, 'Amount must be a positive number');
 
-    const { householdId, fromUserId, toUserId, amount, description } = await request.json();
-
-    if (!householdId || !fromUserId || !toUserId || !amount) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
-
-    // Verify the user is part of the household
-    const { data: membership, error: membershipError } = await supabase
-      .from('household_members')
-      .select('user_id, household_id, role')
-      .eq('user_id', session.user.id)
-      .eq('household_id', householdId)
-      .single();
-
-    if (membershipError || !membership) {
-      return NextResponse.json({ error: 'User is not a member of this household' }, { status: 403 });
-    }
-
-    // Create a settlement record (this is the correct table)
-    const { data: settlement, error: settlementError } = await supabase
-      .from('settlements')
-      .insert({
-        household_id: householdId,
-        payer_id: fromUserId,
-        payee_id: toUserId,
-        amount: parseFloat(amount),
-        description: description || 'Direct settlement payment',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
-      .select()
-      .single();
-
-    if (settlementError) {
-      console.error('Error creating settlement:', settlementError);
-      return NextResponse.json({ error: 'Failed to create settlement record' }, { status: 500 });
-    }
-
-    return NextResponse.json({
-      message: 'Payment marked as complete',
-      settlement
-    });
-  } catch (error) {
-    console.error('Error marking payment as complete:', error);
-    return NextResponse.json({ error: 'Failed to mark payment as complete' }, { status: 500 });
+  const membership = await requireMembership(supabase, householdId, user.id);
+  if (user.id !== fromUserId && user.id !== toUserId && membership.role !== 'admin') {
+    throw new HttpError(403, 'You can only record payments you made or received');
   }
-}
+
+  const { data, error } = await supabase.rpc('create_settlement_simple', {
+    p_household_id: householdId,
+    p_payer_id: fromUserId,
+    p_payee_id: toUserId,
+    p_amount: amount,
+    p_description: description || 'Settlement payment',
+  });
+  if (error) return dbErrorResponse(error, 'Failed to record payment');
+
+  const result = data as SettlementResult;
+  if (!result?.success) return errorResponse(result?.error ?? 'Failed to record payment', 400);
+
+  return NextResponse.json({ message: 'Payment recorded', settlementId: result.settlement_id, amount });
+});

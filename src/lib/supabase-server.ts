@@ -1,20 +1,16 @@
 // src/lib/supabase-server.ts
-// Shared utilities for server-side Supabase operations
-
+// Shared utilities for Route Handlers and Server Components.
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
-import { User } from '@supabase/supabase-js';
+import type { SupabaseClient, User } from '@supabase/supabase-js';
 
 // ============================================================================
-// Supabase Client Creation
+// Client creation
 // ============================================================================
 
-/**
- * Creates a Supabase client for use in API Route Handlers and Server Components.
- * Uses the getAll/setAll cookie pattern required by Next.js 15.
- */
-export async function createSupabaseServerClient() {
+/** Supabase client bound to the request cookies (getAll/setAll pattern required by Next.js 15). */
+export async function createSupabaseServerClient(): Promise<SupabaseClient> {
   const cookieStore = await cookies();
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -26,11 +22,9 @@ export async function createSupabaseServerClient() {
         },
         setAll(cookiesToSet) {
           try {
-            cookiesToSet.forEach(({ name, value, options }) => {
-              cookieStore.set(name, value, options);
-            });
+            cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
           } catch {
-            // Cookie setting may fail in certain contexts (e.g., after response started)
+            // Server Components cannot set cookies; the middleware refreshes the session instead.
           }
         },
       },
@@ -39,157 +33,186 @@ export async function createSupabaseServerClient() {
 }
 
 // ============================================================================
-// Auth Wrappers for API Routes
+// Errors and responses
 // ============================================================================
 
-type AuthenticatedHandler = (
-  request: NextRequest,
-  user: User,
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>
-) => Promise<NextResponse>;
+export class HttpError extends Error {
+  constructor(public status: number, message: string, public details?: unknown) {
+    super(message);
+    this.name = 'HttpError';
+  }
+}
 
-type AuthenticatedHandlerWithParams<T> = (
-  request: NextRequest,
-  user: User,
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
-  params: T
-) => Promise<NextResponse>;
+export function errorResponse(message: string, status = 500, details?: unknown): NextResponse {
+  return NextResponse.json(details === undefined ? { error: message } : { error: message, details }, { status });
+}
+
+interface PostgrestLikeError {
+  code?: string;
+  message?: string;
+  details?: string | null;
+  hint?: string | null;
+}
 
 /**
- * Wraps an API route handler with authentication.
- * Returns 401 if user is not authenticated.
- *
- * @example
- * export const GET = withAuth(async (request, user, supabase) => {
- *   // user is guaranteed to be authenticated
- *   return NextResponse.json({ userId: user.id });
- * });
+ * Map Postgres / PostgREST errors to HTTP statuses. Our RPCs raise readable messages with
+ * conventional SQLSTATEs (28000 auth, 42501 forbidden, P0002 not found, P0001 validation).
+ */
+export function dbErrorResponse(error: PostgrestLikeError, fallback = 'Database error'): NextResponse {
+  const message = error.message || fallback;
+  switch (error.code) {
+    case '28000':
+      return errorResponse(message, 401);
+    case '42501':
+      return errorResponse(message, 403);
+    case 'P0002':
+    case 'PGRST116':
+      return errorResponse(message, 404);
+    case '23505':
+      return errorResponse(message, 409);
+    case 'P0001':
+    case '22P02':
+    case '23502':
+    case '23503':
+    case '23514':
+      return errorResponse(message, 400);
+    default:
+      console.error('[api] database error:', error);
+      return errorResponse(fallback, 500);
+  }
+}
+
+export function handleRouteError(error: unknown): NextResponse {
+  if (error instanceof HttpError) {
+    return errorResponse(error.message, error.status, error.details);
+  }
+  console.error('[api] unhandled error:', error);
+  return errorResponse('Internal server error', 500);
+}
+
+export async function readJson<T = Record<string, unknown>>(request: NextRequest): Promise<T> {
+  try {
+    return (await request.json()) as T;
+  } catch {
+    throw new HttpError(400, 'Invalid JSON body');
+  }
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isUuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID_RE.test(value);
+}
+
+export function requireUuid(value: unknown, label: string): string {
+  if (!isUuid(value)) throw new HttpError(400, `${label} must be a valid id`);
+  return value;
+}
+
+// ============================================================================
+// Auth wrappers
+// ============================================================================
+
+export interface AuthContext {
+  user: User;
+  supabase: SupabaseClient;
+}
+
+export type RouteContext<P> = { params: Promise<P> };
+
+type AuthenticatedHandler = (request: NextRequest, ctx: AuthContext) => Promise<NextResponse>;
+type AuthenticatedHandlerWithParams<P> = (request: NextRequest, ctx: AuthContext & { params: P }) => Promise<NextResponse>;
+
+async function authenticate(): Promise<AuthContext | null> {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+  if (error || !user) return null;
+  return { user, supabase };
+}
+
+/**
+ * Wraps a route handler with authentication (401 when there is no valid session) and uniform
+ * error handling (HttpError → its status, anything else → 500).
  */
 export function withAuth(handler: AuthenticatedHandler) {
   return async (request: NextRequest): Promise<NextResponse> => {
     try {
-      const supabase = await createSupabaseServerClient();
-      const { data: { user }, error } = await supabase.auth.getUser();
-
-      if (error || !user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-
-      return handler(request, user, supabase);
+      const ctx = await authenticate();
+      if (!ctx) return errorResponse('Unauthorized', 401);
+      return await handler(request, ctx);
     } catch (error) {
-      console.error('Auth wrapper error:', error);
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+      return handleRouteError(error);
     }
   };
 }
 
-/**
- * Wraps an API route handler with authentication, supporting route params.
- * Use this for dynamic routes like /api/households/[id].
- *
- * @example
- * export const GET = withAuthParams<{ id: string }>(async (request, user, supabase, params) => {
- *   const { id } = await params;
- *   return NextResponse.json({ householdId: id });
- * });
- */
-export function withAuthParams<T>(handler: AuthenticatedHandlerWithParams<T>) {
-  return async (
-    request: NextRequest,
-    context: { params: T }
-  ): Promise<NextResponse> => {
+/** Same as withAuth for dynamic routes; params are awaited for you. */
+export function withAuthParams<P>(handler: AuthenticatedHandlerWithParams<P>) {
+  return async (request: NextRequest, context: RouteContext<P>): Promise<NextResponse> => {
     try {
-      const supabase = await createSupabaseServerClient();
-      const { data: { user }, error } = await supabase.auth.getUser();
-
-      if (error || !user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-
-      return handler(request, user, supabase, context.params);
+      const ctx = await authenticate();
+      if (!ctx) return errorResponse('Unauthorized', 401);
+      const params = await context.params;
+      return await handler(request, { ...ctx, params });
     } catch (error) {
-      console.error('Auth wrapper error:', error);
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+      return handleRouteError(error);
     }
   };
 }
 
 // ============================================================================
-// Household Access Checks
+// Household access
 // ============================================================================
 
-export interface HouseholdMembership {
+export type HouseholdRole = 'admin' | 'member';
+
+export interface Membership {
   user_id: string;
   household_id: string;
-  role: string;
+  role: HouseholdRole;
 }
 
-export interface AccessCheckResult {
-  authorized: boolean;
-  membership?: HouseholdMembership;
-  error?: string;
-  status?: number;
-}
-
-/**
- * Checks if a user is a member of a household.
- * Optionally requires admin role.
- *
- * @example
- * const access = await checkHouseholdAccess(supabase, householdId, user.id);
- * if (!access.authorized) {
- *   return NextResponse.json({ error: access.error }, { status: access.status });
- * }
- */
-export async function checkHouseholdAccess(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+export async function getMembership(
+  supabase: SupabaseClient,
   householdId: string,
-  userId: string,
-  requireAdmin = false
-): Promise<AccessCheckResult> {
-  const { data: membership, error } = await supabase
+  userId: string
+): Promise<Membership | null> {
+  const { data, error } = await supabase
     .from('household_members')
     .select('user_id, household_id, role')
     .eq('user_id', userId)
     .eq('household_id', householdId)
     .maybeSingle();
-
   if (error) {
-    console.error('Error checking household membership:', error);
-    return {
-      authorized: false,
-      error: 'Failed to verify household membership.',
-      status: 500
-    };
+    console.error('[api] membership check failed:', error);
+    throw new HttpError(500, 'Failed to verify household membership');
   }
-
-  if (!membership) {
-    return {
-      authorized: false,
-      error: 'You are not a member of this household.',
-      status: 403
-    };
-  }
-
-  if (requireAdmin && membership.role !== 'admin') {
-    return {
-      authorized: false,
-      error: 'Only household admins can perform this action.',
-      status: 403
-    };
-  }
-
-  return { authorized: true, membership };
+  return (data as Membership | null) ?? null;
 }
 
-/**
- * Gets the user's current/most recent household.
- * Returns null if user has no household.
- */
+/** Throws 403 unless the user belongs to the household (and is an admin, when required). */
+export async function requireMembership(
+  supabase: SupabaseClient,
+  householdId: string,
+  userId: string,
+  options: { admin?: boolean } = {}
+): Promise<Membership> {
+  const membership = await getMembership(supabase, householdId, userId);
+  if (!membership) throw new HttpError(403, 'You are not a member of this household');
+  if (options.admin && membership.role !== 'admin') {
+    throw new HttpError(403, 'Only household admins can perform this action');
+  }
+  return membership;
+}
+
+/** The household the user joined most recently, or null. */
 export async function getUserCurrentHousehold(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  supabase: SupabaseClient,
   userId: string
-): Promise<{ household_id: string; role: string } | null> {
+): Promise<{ household_id: string; role: HouseholdRole } | null> {
   const { data, error } = await supabase
     .from('household_members')
     .select('household_id, role')
@@ -197,28 +220,6 @@ export async function getUserCurrentHousehold(
     .order('joined_at', { ascending: false })
     .limit(1)
     .maybeSingle();
-
-  if (error || !data) {
-    return null;
-  }
-
-  return data;
-}
-
-// ============================================================================
-// Response Helpers
-// ============================================================================
-
-/**
- * Standard error response helper.
- */
-export function errorResponse(message: string, status: number = 500): NextResponse {
-  return NextResponse.json({ error: message }, { status });
-}
-
-/**
- * Standard success response helper.
- */
-export function successResponse<T>(data: T, status: number = 200): NextResponse {
-  return NextResponse.json(data, { status });
+  if (error || !data) return null;
+  return data as { household_id: string; role: HouseholdRole };
 }
