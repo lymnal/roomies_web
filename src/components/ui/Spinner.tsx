@@ -1,13 +1,30 @@
 // src/components/ui/Spinner.tsx
-export default function Spinner({ size = 'md', className = '' }: { size?: 'sm' | 'md' | 'lg'; className?: string }) {
-  const dims = size === 'sm' ? 'h-5 w-5 border-2' : size === 'lg' ? 'h-12 w-12 border-b-2 border-t-2' : 'h-8 w-8 border-b-2';
-  return <div className={`animate-spin rounded-full border-blue-500 ${dims} ${className}`} aria-label="Loading" />;
+import { cn } from '@/lib/utils';
+
+type SpinnerSize = 'xs' | 'sm' | 'md' | 'lg';
+
+const SIZES: Record<SpinnerSize, string> = {
+  xs: 'h-4 w-4 border-2',
+  sm: 'h-5 w-5 border-2',
+  md: 'h-8 w-8 border-[3px]',
+  lg: 'h-10 w-10 border-[3px]',
+};
+
+export default function Spinner({ size = 'md', className = '' }: { size?: SpinnerSize; className?: string }) {
+  return (
+    <div
+      role="status"
+      aria-label="Loading"
+      className={cn('animate-spin rounded-full border-current border-t-transparent text-brand-600 dark:text-brand-400', SIZES[size], className)}
+    />
+  );
 }
 
-export function FullPageSpinner() {
+export function FullPageSpinner({ label }: { label?: string }) {
   return (
-    <div className="flex min-h-[50vh] items-center justify-center">
+    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-sm text-slate-500 dark:text-slate-400">
       <Spinner size="lg" />
+      {label && <p>{label}</p>}
     </div>
   );
 }

@@ -1,99 +1,196 @@
 // src/app/page.tsx
 import Link from 'next/link';
-import Image from 'next/image';
-import { FaCheckCircle, FaBroom, FaMoneyBillWave, FaUsers, FaComments } from 'react-icons/fa';
+import {
+  HiOutlineArrowRight,
+  HiOutlineBanknotes,
+  HiOutlineChatBubbleLeftRight,
+  HiOutlineCheck,
+  HiOutlineClipboardDocumentCheck,
+  HiOutlineLink,
+  HiOutlineScale,
+  HiOutlineShieldCheck,
+  HiOutlineUsers,
+} from 'react-icons/hi2';
+import Logo from '@/components/ui/Logo';
+
+const FEATURES = [
+  {
+    icon: HiOutlineBanknotes,
+    title: 'Split anything',
+    text: 'Equal, percentage or custom splits. Every expense posts to a shared ledger, so balances always add up.',
+  },
+  {
+    icon: HiOutlineScale,
+    title: 'Settle up in one tap',
+    text: 'Roomies computes the fewest payments that clear everyone, and records them the moment you tap Mark paid.',
+  },
+  {
+    icon: HiOutlineClipboardDocumentCheck,
+    title: 'Tasks that get done',
+    text: 'Assign chores and to-dos with priorities, due dates and repeats. Overdue work is impossible to miss.',
+  },
+  {
+    icon: HiOutlineChatBubbleLeftRight,
+    title: 'One household chat',
+    text: 'Real-time messaging next to the money and the chores, so the conversation and the decision live together.',
+  },
+];
+
+const STEPS = [
+  { icon: HiOutlineUsers, title: 'Create your household', text: 'Name your place. You become its admin.' },
+  { icon: HiOutlineLink, title: 'Invite roommates', text: 'Share a join code or send an invitation link.' },
+  { icon: HiOutlineCheck, title: 'Log the first expense', text: 'Balances, settle-up and tasks light up from there.' },
+];
+
+/** A product preview built from markup so it always matches the real UI. */
+function ProductPreview() {
+  return (
+    <div className="relative mx-auto w-full max-w-lg" aria-hidden="true">
+      <div className="absolute -inset-6 rounded-[2rem] bg-gradient-to-br from-brand-400/30 via-teal-300/20 to-transparent blur-2xl" />
+      <div className="relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-pop dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center gap-1.5 border-b border-slate-200 px-4 py-2.5 dark:border-slate-800">
+          <span className="h-2.5 w-2.5 rounded-full bg-rose-400" />
+          <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+          <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+          <span className="ml-3 text-xs text-slate-400">roomies · 42 Maple Street</span>
+        </div>
+        <div className="space-y-4 p-5">
+          <div className="rounded-xl bg-gradient-to-br from-brand-500 to-teal-600 p-4 text-white">
+            <p className="text-xs uppercase tracking-wider text-white/80">You are owed</p>
+            <p className="mt-1 text-3xl font-semibold tabular-nums">$86.50</p>
+            <div className="mt-3 flex gap-2 text-xs">
+              <span className="rounded-full bg-white/20 px-2 py-0.5">Sam owes $52.00</span>
+              <span className="rounded-full bg-white/20 px-2 py-0.5">Priya owes $34.50</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+              <p className="text-xs text-slate-500">Open tasks</p>
+              <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-white">3</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+              <p className="text-xs text-slate-500">This month</p>
+              <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-white">$1,240</p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {[
+              ['Groceries', 'Alex paid · split 3 ways', '$96.30'],
+              ['Internet', 'Priya paid · split 3 ways', '$60.00'],
+              ['Cleaning supplies', 'You paid · split 3 ways', '$24.75'],
+            ].map(([title, meta, amount]) => (
+              <div key={title} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 dark:border-slate-800">
+                <div>
+                  <p className="text-sm font-medium text-slate-800 dark:text-slate-100">{title}</p>
+                  <p className="text-xs text-slate-500">{meta}</p>
+                </div>
+                <p className="text-sm font-semibold tabular-nums text-slate-900 dark:text-white">{amount}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-neutral-50 text-gray-800">
-      {/* Navigation */}
-      <nav className="container mx-auto px-6 py-4 flex justify-between items-center">
-        <h1 className="text-3xl font-bold text-emerald-800">Roomies</h1>
-        <div className="flex items-center gap-4">
-          <Link href="/login" className="text-gray-700 hover:text-emerald-600">
-            Log in
-          </Link>
-          <Link href="/register" className="bg-emerald-700 hover:bg-emerald-800 text-white py-2 px-4 rounded-md">
-            Sign up free
-          </Link>
-        </div>
-      </nav>
+    <div className="min-h-screen bg-white text-slate-900 dark:bg-slate-950 dark:text-white">
+      <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-white/80 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80">
+        <nav className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
+          <Logo size="md" />
+          <div className="flex items-center gap-3">
+            <Link href="/login" className="hidden text-sm font-medium text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white sm:inline">
+              Log in
+            </Link>
+            <Link href="/register" className="inline-flex h-9 items-center rounded-lg bg-brand-600 px-4 text-sm font-medium text-white shadow-sm hover:bg-brand-700">
+              Get started
+            </Link>
+          </div>
+        </nav>
+      </header>
 
-      {/* Hero */}
-      <section className="container mx-auto px-6 py-12 md:py-24 flex flex-col md:flex-row items-center">
-        <div className="md:w-1/2 mb-12 md:mb-0">
-          <h2 className="text-4xl md:text-5xl font-bold text-gray-800 mb-6">
-            Roommate living
-            <br />
-            made easy
-          </h2>
-          <div className="space-y-4 mb-8">
-            {[
-              'Split bills and settle up with a shared ledger',
-              'Assign tasks and keep everyone accountable',
-              'One chat for the whole household',
-            ].map((line) => (
-              <div key={line} className="flex items-center">
-                <FaCheckCircle className="text-emerald-500 mr-2 flex-shrink-0" />
-                <p className="text-gray-700">{line}</p>
+      <main>
+        <section className="relative overflow-hidden">
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(16,185,129,0.14),transparent_60%)]" />
+          <div className="relative mx-auto grid max-w-6xl items-center gap-14 px-6 py-20 lg:grid-cols-2 lg:py-28">
+            <div className="max-w-xl">
+              <span className="inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 dark:border-brand-900 dark:bg-brand-950/40 dark:text-brand-300">
+                <HiOutlineShieldCheck className="h-4 w-4" /> Free for roommates
+              </span>
+              <h1 className="mt-5 text-4xl font-semibold leading-[1.1] tracking-tight sm:text-5xl lg:text-6xl">
+                The calm way to <span className="bg-gradient-to-r from-brand-600 to-teal-500 bg-clip-text text-transparent">share a home</span>.
+              </h1>
+              <p className="mt-6 text-lg leading-relaxed text-slate-600 dark:text-slate-300">
+                Expenses, chores and chat in one place, with a ledger that keeps everyone honest. No spreadsheets, no awkward reminders.
+              </p>
+              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                <Link href="/register" className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-brand-600 px-6 text-base font-medium text-white shadow-sm transition hover:bg-brand-700">
+                  Create your household <HiOutlineArrowRight className="h-5 w-5" />
+                </Link>
+                <a href="#how-it-works" className="inline-flex h-12 items-center justify-center rounded-xl border border-slate-300 px-6 text-base font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-900">
+                  See how it works
+                </a>
               </div>
-            ))}
+              <p className="mt-4 text-sm text-slate-500">No credit card. Invite your roommates in under a minute.</p>
+            </div>
+            <ProductPreview />
           </div>
-          <Link
-            href="/register"
-            className="bg-emerald-700 hover:bg-emerald-800 text-white py-3 px-6 rounded-md text-lg font-medium inline-block"
-          >
-            Create your household
-          </Link>
-        </div>
-        <div className="md:w-1/2">
-          <div className="relative h-80 w-full">
-            <Image src="/roommate-dashboard.png" alt="Roomies dashboard preview" fill className="object-contain rounded-lg shadow-lg" priority />
-          </div>
-        </div>
-      </section>
+        </section>
 
-      {/* Features */}
-      <section className="py-16 bg-white">
-        <div className="container mx-auto px-6">
-          <h2 className="text-3xl font-bold text-center text-gray-800 mb-16">Everything a shared home needs</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-            {[
-              { icon: FaMoneyBillWave, title: 'Bill splitting', text: 'Log an expense, split it equally, by percentage or custom amounts, and see who owes whom.' },
-              { icon: FaBroom, title: 'Tasks', text: 'Create chores and to-dos, assign them, set priorities and due dates, and tick them off.' },
-              { icon: FaUsers, title: 'Households', text: 'Invite roommates by email or share a join code. Admins manage members and settings.' },
-              { icon: FaComments, title: 'Chat', text: 'A real-time group chat for the household, right next to the money and the chores.' },
-            ].map(({ icon: Icon, title, text }) => (
-              <div key={title} className="flex flex-col items-center text-center">
-                <div className="bg-neutral-100 p-6 rounded-full mb-4">
-                  <Icon className="text-4xl text-emerald-600" />
+        <section className="border-t border-slate-200 bg-slate-50 py-20 dark:border-slate-800 dark:bg-slate-900/40">
+          <div className="mx-auto max-w-6xl px-6">
+            <h2 className="text-center text-3xl font-semibold tracking-tight">Everything a shared home needs</h2>
+            <p className="mx-auto mt-3 max-w-2xl text-center text-slate-600 dark:text-slate-300">Built for households of two to six who want fairness without friction.</p>
+            <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              {FEATURES.map(({ icon: Icon, title, text }) => (
+                <div key={title} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-card transition hover:-translate-y-0.5 hover:shadow-pop dark:border-slate-800 dark:bg-slate-900">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/40 dark:text-brand-300">
+                    <Icon className="h-6 w-6" />
+                  </div>
+                  <h3 className="mt-4 text-lg font-semibold">{title}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">{text}</p>
                 </div>
-                <h3 className="text-xl font-semibold mb-2">{title}</h3>
-                <p className="text-gray-600">{text}</p>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* CTA */}
-      <section className="bg-emerald-700 py-16">
-        <div className="container mx-auto px-6 text-center">
-          <h2 className="text-3xl font-bold text-white mb-6">Ready to simplify roommate living?</h2>
-          <p className="text-white text-lg mb-8 max-w-2xl mx-auto">Set up your household in a couple of minutes and invite your roommates.</p>
-          <Link href="/register" className="bg-white text-emerald-700 py-3 px-8 rounded-md text-lg font-medium hover:bg-neutral-100">
-            Get started free
-          </Link>
-        </div>
-      </section>
-
-      <footer className="bg-neutral-800 text-white py-10">
-        <div className="container mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4">
-          <div>
-            <h3 className="text-2xl font-bold">Roomies</h3>
-            <p className="text-neutral-300">The complete solution for managing your shared living space.</p>
+        <section id="how-it-works" className="py-20">
+          <div className="mx-auto max-w-6xl px-6">
+            <h2 className="text-center text-3xl font-semibold tracking-tight">Up and running in three steps</h2>
+            <ol className="mt-12 grid gap-8 md:grid-cols-3">
+              {STEPS.map(({ icon: Icon, title, text }, index) => (
+                <li key={title} className="relative rounded-2xl border border-slate-200 p-6 dark:border-slate-800">
+                  <span className="absolute -top-3 left-6 rounded-full bg-brand-600 px-2.5 py-0.5 text-xs font-semibold text-white">Step {index + 1}</span>
+                  <Icon className="h-7 w-7 text-brand-600 dark:text-brand-400" />
+                  <h3 className="mt-4 text-lg font-semibold">{title}</h3>
+                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{text}</p>
+                </li>
+              ))}
+            </ol>
           </div>
-          <p className="text-neutral-400">&copy; {new Date().getFullYear()} Roomies</p>
+        </section>
+
+        <section className="px-6 pb-20">
+          <div className="relative mx-auto max-w-5xl overflow-hidden rounded-3xl bg-slate-950 px-8 py-16 text-center text-white">
+            <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(16,185,129,0.35),transparent_60%)]" />
+            <div className="relative">
+              <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Ready to simplify roommate living?</h2>
+              <p className="mx-auto mt-4 max-w-xl text-slate-300">Set up your household now and invite everyone with a single link.</p>
+              <Link href="/register" className="mt-8 inline-flex h-12 items-center justify-center rounded-xl bg-white px-6 text-base font-medium text-slate-900 shadow-sm transition hover:bg-slate-100">
+                Get started free
+              </Link>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer className="border-t border-slate-200 py-10 dark:border-slate-800">
+        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 sm:flex-row">
+          <Logo size="sm" />
+          <p className="text-sm text-slate-500">&copy; {new Date().getFullYear()} Roomies</p>
         </div>
       </footer>
     </div>

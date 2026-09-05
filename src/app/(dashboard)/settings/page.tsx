@@ -4,28 +4,36 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useTheme } from 'next-themes';
+import type { IconType } from 'react-icons';
+import { HiOutlineBell, HiOutlineChevronRight, HiOutlineComputerDesktop, HiOutlineMoon, HiOutlinePlus, HiOutlineSun, HiOutlineUserCircle } from 'react-icons/hi2';
+import { useHousehold } from '@/context/HouseholdContext';
+import { usePageTitle } from '@/hooks/usePageTitle';
+import { cn } from '@/lib/utils';
+import Badge from '@/components/ui/Badge';
 import Card from '@/components/ui/Card';
+import PageHeader from '@/components/ui/PageHeader';
 
-const THEMES: { value: 'light' | 'dark' | 'system'; label: string; icon: string }[] = [
-  { value: 'light', label: 'Light', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z' },
-  { value: 'dark', label: 'Dark', icon: 'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z' },
-  { value: 'system', label: 'System', icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
+const THEMES: { value: 'light' | 'dark' | 'system'; label: string; hint: string; icon: IconType }[] = [
+  { value: 'light', label: 'Light', hint: 'Bright and clean', icon: HiOutlineSun },
+  { value: 'dark', label: 'Dark', hint: 'Easy on the eyes', icon: HiOutlineMoon },
+  { value: 'system', label: 'System', hint: 'Follows your device', icon: HiOutlineComputerDesktop },
 ];
 
 export default function SettingsPage() {
+  usePageTitle('Settings');
   const { theme, setTheme } = useTheme();
+  const { households, current, setCurrentId } = useHousehold();
   const [mounted, setMounted] = useState(false);
 
   // next-themes only knows the real theme after hydration.
   useEffect(() => setMounted(true), []);
 
   return (
-    <div className="container mx-auto py-2">
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Settings</h1>
+    <div className="mx-auto max-w-3xl animate-fade-in">
+      <PageHeader title="Settings" description="Appearance, households and your account." />
 
-      <div className="grid grid-cols-1 gap-6 max-w-2xl">
-        <Card title="Appearance">
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">Choose how Roomies looks on this device.</p>
+      <div className="space-y-6">
+        <Card title="Appearance" description="Choose how Roomies looks on this device.">
           <div className="grid grid-cols-3 gap-3">
             {THEMES.map((option) => {
               const active = mounted && theme === option.value;
@@ -34,39 +42,78 @@ export default function SettingsPage() {
                   key={option.value}
                   type="button"
                   onClick={() => setTheme(option.value)}
-                  className={`flex flex-col items-center justify-center p-3 border rounded-md ${
-                    active ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
-                  }`}
                   aria-pressed={active}
+                  className={cn(
+                    'flex flex-col items-center justify-center rounded-xl border p-4 text-center transition',
+                    active
+                      ? 'border-brand-500 bg-brand-50 ring-2 ring-brand-500/30 dark:bg-brand-900/30'
+                      : 'border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/60'
+                  )}
                 >
-                  <svg className="h-6 w-6 text-gray-900 dark:text-white mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={option.icon} />
-                  </svg>
-                  <span className="text-sm font-medium text-gray-900 dark:text-white">{option.label}</span>
+                  <option.icon className={cn('mb-2 h-6 w-6', active ? 'text-brand-600 dark:text-brand-300' : 'text-slate-500 dark:text-slate-400')} />
+                  <span className="text-sm font-medium text-slate-900 dark:text-white">{option.label}</span>
+                  <span className="mt-0.5 hidden text-xs text-slate-500 sm:block dark:text-slate-400">{option.hint}</span>
                 </button>
               );
             })}
           </div>
         </Card>
 
-        <Card title="Account">
-          <ul className="divide-y divide-gray-200 dark:divide-gray-700 text-sm">
-            <li className="py-3 flex items-center justify-between">
-              <span className="text-gray-700 dark:text-gray-300">Name, photo and password</span>
-              <Link href="/profile" className="text-blue-600 dark:text-blue-400 hover:underline">
-                Edit profile
+        <Card title="Households" description="Switch which household the app shows." noPadding>
+          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+            {households.map((household) => {
+              const active = household.id === current?.id;
+              return (
+                <li key={household.id}>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentId(household.id)}
+                    className="flex w-full items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                    aria-pressed={active}
+                  >
+                    <span className={cn('h-2.5 w-2.5 flex-shrink-0 rounded-full', active ? 'bg-brand-500' : 'bg-slate-300 dark:bg-slate-600')} aria-hidden="true" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-slate-900 dark:text-white">{household.name}</span>
+                      <span className="block truncate text-xs text-slate-500 dark:text-slate-400">
+                        {household.memberCount} {household.memberCount === 1 ? 'member' : 'members'}
+                        {household.address ? ` · ${household.address}` : ''}
+                      </span>
+                    </span>
+                    <Badge tone={household.role === 'admin' ? 'purple' : 'neutral'}>{household.role}</Badge>
+                    {active && <Badge tone="brand">Current</Badge>}
+                  </button>
+                </li>
+              );
+            })}
+            <li>
+              <Link href="/households/new" className="flex items-center gap-3 px-5 py-3 text-sm font-medium text-brand-600 transition-colors hover:bg-slate-50 dark:text-brand-400 dark:hover:bg-slate-800/60">
+                <HiOutlinePlus className="h-4 w-4" /> Create or join another household
               </Link>
             </li>
-            <li className="py-3 flex items-center justify-between">
-              <span className="text-gray-700 dark:text-gray-300">Households and invitations</span>
-              <Link href="/invitations" className="text-blue-600 dark:text-blue-400 hover:underline">
-                View invitations
+          </ul>
+        </Card>
+
+        <Card title="Account" noPadding>
+          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+            <li>
+              <Link href="/profile" className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                <HiOutlineUserCircle className="h-5 w-5 text-slate-400" />
+                <span className="flex-1 text-sm text-slate-700 dark:text-slate-200">Name, photo and password</span>
+                <HiOutlineChevronRight className="h-4 w-4 text-slate-400" />
               </Link>
             </li>
-            <li className="py-3 flex items-center justify-between">
-              <span className="text-gray-700 dark:text-gray-300">Delete your account</span>
-              <Link href="/profile" className="text-red-600 dark:text-red-400 hover:underline">
-                Danger zone
+            <li>
+              <Link href="/invitations" className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                <HiOutlineBell className="h-5 w-5 text-slate-400" />
+                <span className="flex-1 text-sm text-slate-700 dark:text-slate-200">Invitations</span>
+                <HiOutlineChevronRight className="h-4 w-4 text-slate-400" />
+              </Link>
+            </li>
+            <li>
+              <Link href="/profile" className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                <span className="h-5 w-5" aria-hidden="true" />
+                <span className="flex-1 text-sm text-rose-600 dark:text-rose-400">Delete your account</span>
+                <HiOutlineChevronRight className="h-4 w-4 text-slate-400" />
               </Link>
             </li>
           </ul>

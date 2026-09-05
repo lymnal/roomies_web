@@ -5,18 +5,33 @@ import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabaseClient } from '@/lib/supabase';
+import { usePageTitle } from '@/hooks/usePageTitle';
+import AuthLayout from '@/components/auth/AuthLayout';
 import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 import Alert from '@/components/ui/Alert';
+import Button from '@/components/ui/Button';
+import { FormField, Input } from '@/components/ui/Field';
 import { FullPageSpinner } from '@/components/ui/Spinner';
-
-const inputClass =
-  'relative block w-full border-0 py-3 text-gray-900 dark:text-white ring-1 ring-inset ring-gray-300 dark:ring-gray-700 dark:bg-gray-800 placeholder:text-gray-400 focus:z-10 focus:ring-2 focus:ring-inset focus:ring-emerald-600 sm:text-sm sm:leading-6 px-4';
 
 function safeCallback(value: string | null): string {
   return value && value.startsWith('/') && !value.startsWith('//') ? value : '/dashboard';
 }
 
+function Divider() {
+  return (
+    <div className="relative my-6">
+      <div className="absolute inset-0 flex items-center">
+        <div className="w-full border-t border-slate-200 dark:border-slate-800" />
+      </div>
+      <div className="relative flex justify-center text-xs uppercase tracking-wider">
+        <span className="bg-slate-50 px-3 text-slate-400 dark:bg-slate-950">or</span>
+      </div>
+    </div>
+  );
+}
+
 function LoginForm() {
+  usePageTitle('Sign in');
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = safeCallback(searchParams.get('callbackUrl'));
@@ -48,68 +63,46 @@ function LoginForm() {
     }
   };
 
+  const registerHref = `/register${searchParams.get('callbackUrl') ? `?callbackUrl=${encodeURIComponent(callbackUrl)}` : ''}`;
+
   return (
-    <div className="flex min-h-screen items-center justify-center py-12 px-4 sm:px-6 lg:px-8 bg-gray-50 dark:bg-gray-900">
-      <div className="w-full max-w-md space-y-8">
-        <div>
-          <h1 className="text-center text-3xl font-bold text-emerald-600 dark:text-emerald-400">Roomies</h1>
-          <h2 className="mt-6 text-center text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Sign in to your account</h2>
-          <p className="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">
-            Or{' '}
-            <Link
-              href={`/register${searchParams.get('callbackUrl') ? `?callbackUrl=${encodeURIComponent(callbackUrl)}` : ''}`}
-              className="font-medium text-emerald-600 hover:text-emerald-500 dark:text-emerald-400 dark:hover:text-emerald-300"
-            >
-              create a new account
-            </Link>
-          </p>
-        </div>
-
+    <AuthLayout
+      title="Welcome back"
+      subtitle="Sign in to your household."
+      footer={
+        <>
+          New to Roomies?{' '}
+          <Link href={registerHref} className="font-medium text-brand-600 hover:underline dark:text-brand-400">
+            Create an account
+          </Link>
+        </>
+      }
+    >
+      <GoogleSignInButton redirectTo={callbackUrl} />
+      <Divider />
+      <form className="space-y-5" onSubmit={handleSubmit} noValidate>
         {error && <Alert kind="error">{error}</Alert>}
-
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div className="-space-y-px rounded-md shadow-sm">
-            <div>
-              <label htmlFor="email-address" className="sr-only">
-                Email address
-              </label>
-              <input id="email-address" name="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={`${inputClass} rounded-t-md`} placeholder="Email address" />
-            </div>
-            <div>
-              <label htmlFor="password" className="sr-only">
-                Password
-              </label>
-              <input id="password" name="password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} className={`${inputClass} rounded-b-md`} placeholder="Password" />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-end text-sm">
-            <Link href="/forgot-password" className="font-medium text-emerald-600 hover:text-emerald-500 dark:text-emerald-400 dark:hover:text-emerald-300">
-              Forgot your password?
-            </Link>
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex w-full justify-center rounded-md bg-emerald-600 py-3 px-3 text-sm font-semibold text-white hover:bg-emerald-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? 'Signing in...' : 'Sign in'}
-          </button>
-
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-300 dark:border-gray-600" />
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="bg-gray-50 dark:bg-gray-900 px-2 text-gray-500 dark:text-gray-400">Or continue with</span>
-            </div>
-          </div>
-
-          <GoogleSignInButton redirectTo={callbackUrl} />
-        </form>
-      </div>
-    </div>
+        <FormField label="Email" htmlFor="email">
+          <Input id="email" name="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+        </FormField>
+        <FormField
+          label={
+            <span className="flex items-center justify-between">
+              <span>Password</span>
+              <Link href="/forgot-password" className="text-xs font-medium text-brand-600 hover:underline dark:text-brand-400">
+                Forgot password?
+              </Link>
+            </span>
+          }
+          htmlFor="password"
+        >
+          <Input id="password" name="password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
+        </FormField>
+        <Button type="submit" size="lg" fullWidth isLoading={loading}>
+          Sign in
+        </Button>
+      </form>
+    </AuthLayout>
   );
 }
 

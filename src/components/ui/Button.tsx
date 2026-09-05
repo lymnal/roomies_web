@@ -1,12 +1,51 @@
 // src/components/ui/Button.tsx
 'use client';
 
-import { ReactNode, ButtonHTMLAttributes, forwardRef } from 'react';
+import { ButtonHTMLAttributes, ReactNode, forwardRef } from 'react';
+import { cn } from '@/lib/utils';
+import Spinner from './Spinner';
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  children: ReactNode;
-  variant?: 'primary' | 'secondary' | 'outline' | 'danger' | 'success';
-  size?: 'sm' | 'md' | 'lg';
+export type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger' | 'link';
+export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg' | 'icon';
+
+const BASE =
+  'inline-flex items-center justify-center whitespace-nowrap rounded-lg font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 dark:focus-visible:ring-offset-slate-900';
+
+const VARIANTS: Record<ButtonVariant, string> = {
+  primary: 'bg-brand-600 text-white shadow-sm hover:bg-brand-700 focus-visible:ring-brand-500',
+  secondary:
+    'bg-slate-100 text-slate-900 hover:bg-slate-200 focus-visible:ring-slate-400 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700',
+  outline:
+    'border border-slate-300 bg-white text-slate-800 shadow-sm hover:bg-slate-50 focus-visible:ring-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800',
+  ghost: 'text-slate-700 hover:bg-slate-100 focus-visible:ring-slate-400 dark:text-slate-200 dark:hover:bg-slate-800',
+  danger: 'bg-rose-600 text-white shadow-sm hover:bg-rose-700 focus-visible:ring-rose-500',
+  link: 'h-auto px-0 text-brand-600 hover:underline focus-visible:ring-brand-500 dark:text-brand-400',
+};
+
+const SIZES: Record<ButtonSize, string> = {
+  xs: 'h-7 gap-1 px-2.5 text-xs',
+  sm: 'h-8 gap-1.5 px-3 text-sm',
+  md: 'h-10 gap-2 px-4 text-sm',
+  lg: 'h-11 gap-2 px-5 text-base',
+  icon: 'h-9 w-9 p-0',
+};
+
+interface ButtonStyleOptions {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  fullWidth?: boolean;
+  className?: string;
+}
+
+/** The button look as a class string, for links that should read as buttons. */
+export function buttonClasses({ variant = 'primary', size = 'md', fullWidth = false, className = '' }: ButtonStyleOptions): string {
+  return cn(BASE, VARIANTS[variant], variant === 'link' ? 'text-sm' : SIZES[size], fullWidth && 'w-full', className);
+}
+
+export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  children?: ReactNode;
+  variant?: ButtonVariant;
+  size?: ButtonSize;
   fullWidth?: boolean;
   isLoading?: boolean;
   leftIcon?: ReactNode;
@@ -15,87 +54,15 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   (
-    {
-      children,
-      variant = 'primary',
-      size = 'md',
-      fullWidth = false,
-      isLoading = false,
-      disabled,
-      leftIcon,
-      rightIcon,
-      className = '',
-      ...props
-    },
+    { children, variant = 'primary', size = 'md', fullWidth = false, isLoading = false, disabled, leftIcon, rightIcon, className = '', type = 'button', ...props },
     ref
-  ) => {
-    // Base styles
-    const baseStyles = "inline-flex items-center justify-center font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2";
-    
-    // Variant styles
-    const variantStyles = {
-      primary: "bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 border border-transparent disabled:bg-blue-400",
-      secondary: "bg-gray-200 text-gray-800 hover:bg-gray-300 focus:ring-gray-500 border border-transparent disabled:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600",
-      outline: "bg-transparent text-gray-700 hover:bg-gray-50 focus:ring-gray-500 border border-gray-300 disabled:text-gray-400 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-800",
-      danger: "bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 border border-transparent disabled:bg-red-400",
-      success: "bg-green-600 text-white hover:bg-green-700 focus:ring-green-500 border border-transparent disabled:bg-green-400"
-    };
-    
-    // Size styles
-    const sizeStyles = {
-      sm: "text-xs px-2.5 py-1.5",
-      md: "text-sm px-4 py-2",
-      lg: "text-base px-6 py-3"
-    };
-    
-    // Width styles
-    const widthStyles = fullWidth ? "w-full" : "";
-    
-    // Disabled and loading styles
-    const stateStyles = (disabled || isLoading) ? "cursor-not-allowed opacity-70" : "";
-
-    return (
-      <button
-        ref={ref}
-        disabled={disabled || isLoading}
-        className={`
-          ${baseStyles}
-          ${variantStyles[variant]}
-          ${sizeStyles[size]}
-          ${widthStyles}
-          ${stateStyles}
-          ${className}
-        `}
-        {...props}
-      >
-        {isLoading && (
-          <svg 
-            className="animate-spin -ml-1 mr-2 h-4 w-4" 
-            xmlns="http://www.w3.org/2000/svg" 
-            fill="none" 
-            viewBox="0 0 24 24"
-          >
-            <circle 
-              className="opacity-25" 
-              cx="12" 
-              cy="12" 
-              r="10" 
-              stroke="currentColor" 
-              strokeWidth="4"
-            ></circle>
-            <path 
-              className="opacity-75" 
-              fill="currentColor" 
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            ></path>
-          </svg>
-        )}
-        {!isLoading && leftIcon && <span className="mr-2">{leftIcon}</span>}
-        {children}
-        {!isLoading && rightIcon && <span className="ml-2">{rightIcon}</span>}
-      </button>
-    );
-  }
+  ) => (
+    <button ref={ref} type={type} disabled={disabled || isLoading} className={buttonClasses({ variant, size, fullWidth, className })} {...props}>
+      {isLoading ? <Spinner size="xs" className="text-current" /> : leftIcon ? <span className="-ml-0.5 flex-shrink-0">{leftIcon}</span> : null}
+      {children}
+      {!isLoading && rightIcon && <span className="-mr-0.5 flex-shrink-0">{rightIcon}</span>}
+    </button>
+  )
 );
 
 Button.displayName = 'Button';

@@ -1,7 +1,16 @@
 // src/components/invitations/InviteModal.tsx
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { HiOutlineArrowPath, HiOutlineClipboardDocument, HiOutlineClock, HiOutlineEnvelope, HiOutlineKey } from 'react-icons/hi2';
+import { errorMessage } from '@/lib/api-client';
+import { fetchHousehold, regenerateJoinCode } from '@/lib/services/households';
+import Alert from '@/components/ui/Alert';
+import Button from '@/components/ui/Button';
+import Modal from '@/components/ui/Modal';
+import Segmented from '@/components/ui/Segmented';
+import Skeleton from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
 import InvitationForm from './InvitationForm';
 import PendingInvitations from './PendingInvitations';
 
@@ -10,53 +19,96 @@ interface InviteModalProps {
   onClose: () => void;
 }
 
+type Tab = 'invite' | 'code' | 'pending';
+
 export default function InviteModal({ householdId, onClose }: InviteModalProps) {
-  const [activeTab, setActiveTab] = useState<'invite' | 'pending'>('invite');
+  const [tab, setTab] = useState<Tab>('invite');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  const tabClass = (tab: 'invite' | 'pending') =>
-    `${
-      activeTab === tab
-        ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-    } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`;
+  return (
+    <Modal open onClose={onClose} title="Invite roommates" description="Send a personal link, or share the join code. Either way they land in this household.">
+      <Segmented
+        ariaLabel="Invitation method"
+        value={tab}
+        onChange={setTab}
+        className="mb-5"
+        options={[
+          { value: 'invite', label: 'Send a link', icon: <HiOutlineEnvelope className="h-4 w-4" /> },
+          { value: 'code', label: 'Join code', icon: <HiOutlineKey className="h-4 w-4" /> },
+          { value: 'pending', label: 'Pending', icon: <HiOutlineClock className="h-4 w-4" /> },
+        ]}
+      />
+      {tab === 'invite' && <InvitationForm householdId={householdId} onInviteSent={() => setRefreshTrigger((n) => n + 1)} onCancel={onClose} />}
+      {tab === 'code' && <JoinCodePanel householdId={householdId} />}
+      {tab === 'pending' && <PendingInvitations key={refreshTrigger} householdId={householdId} onRefresh={() => setRefreshTrigger((n) => n + 1)} />}
+    </Modal>
+  );
+}
+
+function JoinCodePanel({ householdId }: { householdId: string }) {
+  const toast = useToast();
+  const [code, setCode] = useState<string | null | undefined>(undefined);
+  const [error, setError] = useState('');
+  const [rotating, setRotating] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchHousehold(householdId)
+      .then((household) => {
+        if (!cancelled) setCode(household.joinCode ?? null);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(errorMessage(err, 'Failed to load the join code'));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [householdId]);
+
+  const copy = async () => {
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      toast.success('Join code copied');
+    } catch {
+      toast.error('Could not copy', 'Select the code and copy it by hand.');
+    }
+  };
+
+  const rotate = async () => {
+    setRotating(true);
+    setError('');
+    try {
+      const { joinCode } = await regenerateJoinCode(householdId);
+      setCode(joinCode);
+      toast.success('New join code ready', 'The old code no longer works.');
+    } catch (err) {
+      setError(errorMessage(err, 'Failed to generate a new code'));
+    } finally {
+      setRotating(false);
+    }
+  };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="invite-modal-title">
-      <div className="flex items-center justify-center min-h-screen px-4">
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onClick={onClose} />
-
-        <div className="relative bg-white dark:bg-gray-800 rounded-lg max-w-md w-full p-6 shadow-xl">
-          <button type="button" className="absolute top-4 right-4 text-gray-400 hover:text-gray-500 dark:hover:text-gray-300" onClick={onClose} aria-label="Close">
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-
-          <h3 id="invite-modal-title" className="text-lg font-medium leading-6 text-gray-900 dark:text-white pr-8">
-            Invite roommates
-          </h3>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Send an invitation link, or share the household join code from your dashboard.</p>
-
-          <div className="mt-4 border-b border-gray-200 dark:border-gray-700">
-            <nav className="-mb-px flex space-x-8">
-              <button type="button" onClick={() => setActiveTab('invite')} className={tabClass('invite')}>
-                New invitation
-              </button>
-              <button type="button" onClick={() => setActiveTab('pending')} className={tabClass('pending')}>
-                Pending
-              </button>
-            </nav>
-          </div>
-
-          <div className="mt-4">
-            {activeTab === 'invite' ? (
-              <InvitationForm householdId={householdId} onInviteSent={() => setRefreshTrigger((n) => n + 1)} />
-            ) : (
-              <PendingInvitations key={refreshTrigger} householdId={householdId} onRefresh={() => setRefreshTrigger((n) => n + 1)} />
-            )}
-          </div>
-        </div>
+    <div className="space-y-4">
+      {error && <Alert kind="error">{error}</Alert>}
+      <p className="text-sm text-slate-600 dark:text-slate-300">
+        Roommates enter this code on their Roomies dashboard under <span className="font-medium">Join with a code</span> and become members instantly.
+      </p>
+      <div className="rounded-2xl border border-dashed border-brand-300 bg-brand-50/60 p-6 text-center dark:border-brand-800 dark:bg-brand-900/20">
+        {code === undefined ? (
+          <Skeleton className="mx-auto h-10 w-44" />
+        ) : (
+          <p className="font-mono text-3xl font-semibold tracking-[0.35em] text-slate-900 dark:text-white">{code ?? '——'}</p>
+        )}
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button fullWidth leftIcon={<HiOutlineClipboardDocument className="h-4 w-4" />} onClick={() => void copy()} disabled={!code}>
+          Copy code
+        </Button>
+        <Button fullWidth variant="outline" leftIcon={<HiOutlineArrowPath className="h-4 w-4" />} onClick={() => void rotate()} isLoading={rotating}>
+          {code ? 'Generate a new code' : 'Generate code'}
+        </Button>
       </div>
     </div>
   );

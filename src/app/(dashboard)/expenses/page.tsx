@@ -1,21 +1,30 @@
 // src/app/(dashboard)/expenses/page.tsx
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { HiOutlineArrowTrendingUp, HiOutlineBanknotes, HiOutlinePlus, HiOutlineScale } from 'react-icons/hi2';
 import { useAuth } from '@/context/AuthContext';
 import { useHousehold } from '@/context/HouseholdContext';
+import { usePageTitle } from '@/hooks/usePageTitle';
 import { errorMessage } from '@/lib/api-client';
-import { createExpense, deleteExpense, fetchExpenses, settleShare, updateExpense } from '@/lib/services/expenses';
+import { createExpense, deleteExpense, fetchBalances, fetchExpenses, settleShare, updateExpense } from '@/lib/services/expenses';
 import { fetchMembers } from '@/lib/services/households';
-import { formatCurrency, formatDate } from '@/lib/utils';
-import type { Expense, ExpenseInput, HouseholdRole, Member, Split } from '@/types';
+import { cn, formatCurrency, todayISODate } from '@/lib/utils';
+import type { Balance, Expense, ExpenseInput, HouseholdRole, Member, Split } from '@/types';
+import HouseholdRequired from '@/components/dashboard/HouseholdRequired';
 import ExpenseForm from '@/components/expenses/ExpenseForm';
+import ExpenseList, { type ExpenseFilter } from '@/components/expenses/ExpenseList';
 import PaymentMatrix from '@/components/expenses/PaymentMatrix';
 import Alert from '@/components/ui/Alert';
-import Avatar from '@/components/ui/Avatar';
+import Button from '@/components/ui/Button';
+import { useConfirm } from '@/components/ui/Confirm';
+import Modal from '@/components/ui/Modal';
+import PageHeader from '@/components/ui/PageHeader';
+import Segmented from '@/components/ui/Segmented';
+import Skeleton, { SkeletonCard } from '@/components/ui/Skeleton';
 import { FullPageSpinner } from '@/components/ui/Spinner';
+import { useToast } from '@/components/ui/Toast';
 
 export default function ExpensesPage() {
   return (
@@ -26,49 +35,71 @@ export default function ExpensesPage() {
 }
 
 function ExpensesGate() {
+  usePageTitle('Expenses');
   const { current, loading } = useHousehold();
   const { user } = useAuth();
   const searchParams = useSearchParams();
 
   if (loading || !user) return <FullPageSpinner />;
-  if (!current) {
-    return (
-      <Alert kind="info">
-        You are not in a household yet.{' '}
-        <Link href="/dashboard" className="underline">
-          Create or join one
-        </Link>{' '}
-        to start tracking expenses.
-      </Alert>
-    );
-  }
-  return <ExpensesView key={current.id} householdId={current.id} currentUserId={user.id} viewerRole={current.role} openNew={searchParams.get('new') === '1'} />;
+  if (!current) return <HouseholdRequired feature="tracking expenses" />;
+
+  return (
+    <ExpensesView
+      key={current.id}
+      householdId={current.id}
+      householdName={current.name}
+      currentUserId={user.id}
+      viewerRole={current.role}
+      openNew={searchParams.get('new') === '1'}
+      initialView={searchParams.get('tab') === 'settle' ? 'plan' : 'summary'}
+    />
+  );
 }
 
 interface ExpensesViewProps {
   householdId: string;
+  householdName: string;
   currentUserId: string;
   viewerRole: HouseholdRole;
   openNew: boolean;
+  initialView: 'summary' | 'plan';
 }
 
-function ExpensesView({ householdId, currentUserId, viewerRole, openNew }: ExpensesViewProps) {
+function matchesFilter(expense: Expense, filter: ExpenseFilter, currentUserId: string): boolean {
+  const mySplit = expense.splits.find((s) => s.userId === currentUserId);
+  const owedShares = expense.splits.filter((s) => s.userId !== expense.paidBy);
+  switch (filter) {
+    case 'PAID_BY_ME':
+      return expense.paidBy === currentUserId;
+    case 'I_OWE':
+      return expense.paidBy !== currentUserId && Boolean(mySplit) && (mySplit?.amount ?? 0) > 0 && !mySplit?.settled;
+    case 'SETTLED':
+      return expense.paidBy === currentUserId ? owedShares.length > 0 && owedShares.every((s) => s.settled) : Boolean(mySplit?.settled);
+    default:
+      return true;
+  }
+}
+
+function ExpensesView({ householdId, householdName, currentUserId, viewerRole, openNew, initialView }: ExpensesViewProps) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [balances, setBalances] = useState<Balance[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(openNew);
   const [editing, setEditing] = useState<Expense | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [matrixKey, setMatrixKey] = useState(0);
+  const [filter, setFilter] = useState<ExpenseFilter>('ALL');
 
   const load = useCallback(async () => {
     try {
       setError('');
-      const [expenseList, memberList] = await Promise.all([fetchExpenses(householdId), fetchMembers(householdId)]);
+      const [expenseList, memberList, balanceList] = await Promise.all([fetchExpenses(householdId), fetchMembers(householdId), fetchBalances(householdId)]);
       setExpenses(expenseList);
       setMembers(memberList);
+      setBalances(balanceList);
     } catch (err) {
       setError(errorMessage(err, 'Failed to load expenses'));
     } finally {
@@ -80,31 +111,63 @@ function ExpensesView({ householdId, currentUserId, viewerRole, openNew }: Expen
     void load();
   }, [load]);
 
-  const refreshAll = async () => {
-    await load();
-    setMatrixKey((k) => k + 1);
+  const stats = useMemo(() => {
+    const net = balances.find((b) => b.userId === currentUserId)?.net ?? 0;
+    const monthKey = todayISODate().slice(0, 7);
+    const monthTotal = expenses.filter((e) => e.date.startsWith(monthKey)).reduce((sum, e) => sum + e.amount, 0);
+    const unpaid = expenses.flatMap((e) => e.splits.filter((s) => s.userId === currentUserId && e.paidBy !== currentUserId && !s.settled && s.amount > 0));
+    return { net, monthTotal, unpaidCount: unpaid.length, unpaidTotal: unpaid.reduce((sum, s) => sum + s.amount, 0) };
+  }, [balances, expenses, currentUserId]);
+
+  const counts = useMemo(
+    () => ({
+      ALL: expenses.length,
+      PAID_BY_ME: expenses.filter((e) => matchesFilter(e, 'PAID_BY_ME', currentUserId)).length,
+      I_OWE: expenses.filter((e) => matchesFilter(e, 'I_OWE', currentUserId)).length,
+      SETTLED: expenses.filter((e) => matchesFilter(e, 'SETTLED', currentUserId)).length,
+    }),
+    [expenses, currentUserId]
+  );
+
+  const visible = useMemo(() => expenses.filter((e) => matchesFilter(e, filter, currentUserId)), [expenses, filter, currentUserId]);
+
+  const openForm = (expense: Expense | null) => {
+    setEditing(expense);
+    setShowForm(true);
+  };
+
+  const closeForm = () => {
+    setShowForm(false);
+    setEditing(null);
   };
 
   const handleSubmit = async (input: ExpenseInput) => {
     if (editing) {
       await updateExpense(editing.id, input);
+      toast.success('Expense updated', 'The ledger was corrected.');
     } else {
       await createExpense(input);
+      toast.success('Expense added', `${input.title} · ${formatCurrency(input.amount)}`);
     }
-    setShowForm(false);
-    setEditing(null);
-    await refreshAll();
+    closeForm();
+    await load();
   };
 
   const handleDelete = async (expense: Expense) => {
-    if (!window.confirm(`Delete "${expense.title}" (${formatCurrency(expense.amount)})? Balances will be adjusted.`)) return;
+    const ok = await confirm({
+      title: `Delete "${expense.title}"?`,
+      description: `${formatCurrency(expense.amount)} comes off everyone's balance. The ledger keeps a reversal entry.`,
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
     setBusyId(expense.id);
-    setError('');
     try {
       await deleteExpense(expense.id);
-      await refreshAll();
+      await load();
+      toast.success('Expense deleted');
     } catch (err) {
-      setError(errorMessage(err, 'Failed to delete expense'));
+      toast.error(errorMessage(err, 'Failed to delete expense'));
     } finally {
       setBusyId(null);
     }
@@ -112,12 +175,12 @@ function ExpensesView({ householdId, currentUserId, viewerRole, openNew }: Expen
 
   const handleSettle = async (split: Split, settled: boolean) => {
     setBusyId(split.id);
-    setError('');
     try {
       await settleShare(split.id, settled);
-      await refreshAll();
+      await load();
+      toast.success(settled ? 'Marked as paid' : 'Marked as unpaid');
     } catch (err) {
-      setError(errorMessage(err, 'Failed to update payment'));
+      toast.error(errorMessage(err, 'Failed to update payment'));
     } finally {
       setBusyId(null);
     }
@@ -125,23 +188,22 @@ function ExpensesView({ householdId, currentUserId, viewerRole, openNew }: Expen
 
   const canManage = (expense: Expense) => viewerRole === 'admin' || expense.paidBy === currentUserId || expense.createdBy === currentUserId;
 
-  if (loading) return <FullPageSpinner />;
+  if (loading) return <ExpensesSkeleton />;
+
+  const netLabel = stats.net > 0.004 ? 'You are owed' : stats.net < -0.004 ? 'You owe' : 'Your balance';
 
   return (
-    <div className="container mx-auto py-2 space-y-8">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Household expenses</h1>
-        <button
-          type="button"
-          onClick={() => {
-            setEditing(null);
-            setShowForm(true);
-          }}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium"
-        >
-          + Add expense
-        </button>
-      </div>
+    <div className="animate-fade-in space-y-6">
+      <PageHeader
+        eyebrow={householdName}
+        title="Expenses"
+        description="Every shared cost, who paid, and who still owes."
+        actions={
+          <Button leftIcon={<HiOutlinePlus className="h-4 w-4" />} onClick={() => openForm(null)}>
+            Add expense
+          </Button>
+        }
+      />
 
       {error && (
         <Alert kind="error" onDismiss={() => setError('')}>
@@ -149,197 +211,101 @@ function ExpensesView({ householdId, currentUserId, viewerRole, openNew }: Expen
         </Alert>
       )}
 
-      <PaymentMatrix key={matrixKey} householdId={householdId} currentUserId={currentUserId} onSettled={() => void load()} />
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard
+          icon={<HiOutlineScale className="h-5 w-5" />}
+          tone={stats.net > 0.004 ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-300' : stats.net < -0.004 ? 'bg-rose-50 text-rose-600 dark:bg-rose-900/40 dark:text-rose-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300'}
+          label={netLabel}
+          value={formatCurrency(Math.abs(stats.net))}
+          hint={Math.abs(stats.net) < 0.005 ? 'All settled up' : 'From the ledger'}
+        />
+        <StatCard icon={<HiOutlineArrowTrendingUp className="h-5 w-5" />} tone="bg-amber-50 text-amber-600 dark:bg-amber-900/40 dark:text-amber-300" label="This month" value={formatCurrency(stats.monthTotal)} hint="Household total" />
+        <StatCard
+          icon={<HiOutlineBanknotes className="h-5 w-5" />}
+          tone="bg-sky-50 text-sky-600 dark:bg-sky-900/40 dark:text-sky-300"
+          label="Your unpaid shares"
+          value={String(stats.unpaidCount)}
+          hint={stats.unpaidCount > 0 ? `${formatCurrency(stats.unpaidTotal)} to pay` : 'Nothing outstanding'}
+        />
+      </div>
 
-      <section>
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Recent expenses</h2>
-        {expenses.length === 0 ? (
-          <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg p-6 text-center text-gray-500 dark:text-gray-400">No expenses yet. Add the first one!</div>
-        ) : (
-          <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                <thead className="bg-gray-50 dark:bg-gray-700">
-                  <tr>
-                    {['Expense', 'Date', 'Amount', 'Paid by', 'Your share', 'Status', ''].map((h) => (
-                      <th key={h} scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                  {expenses.map((expense) => {
-                    const isPayer = expense.paidBy === currentUserId;
-                    const mySplit = expense.splits.find((s) => s.userId === currentUserId);
-                    const owedShares = expense.splits.filter((s) => s.userId !== expense.paidBy);
-                    const settledCount = owedShares.filter((s) => s.settled).length;
-                    const expanded = expandedId === expense.id;
-                    const busy = busyId === expense.id;
-
-                    let status: React.ReactNode;
-                    if (isPayer) {
-                      status = (
-                        <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                          You paid · {settledCount}/{owedShares.length} settled
-                        </span>
-                      );
-                    } else if (!mySplit || mySplit.amount === 0) {
-                      status = <span className="text-xs text-gray-400">Not involved</span>;
-                    } else if (mySplit.settled) {
-                      status = <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Settled</span>;
-                    } else {
-                      status = <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">You owe</span>;
-                    }
-
-                    return (
-                      <FragmentRow key={expense.id}>
-                        <tr className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                          <td className="px-4 py-3">
-                            <button type="button" onClick={() => setExpandedId(expanded ? null : expense.id)} className="text-left">
-                              <div className="text-sm font-medium text-gray-900 dark:text-white">{expense.title}</div>
-                              <div className="text-xs text-gray-500 dark:text-gray-400">
-                                {expense.splits.length} {expense.splits.length === 1 ? 'person' : 'people'} · {expanded ? 'hide shares' : 'show shares'}
-                              </div>
-                            </button>
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{formatDate(expense.date)}</td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 dark:text-white">{formatCurrency(expense.amount)}</td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                            <span className="inline-flex items-center gap-2">
-                              <Avatar src={expense.paidByAvatar} name={expense.paidByName} size={24} />
-                              {isPayer ? 'You' : expense.paidByName}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{mySplit ? formatCurrency(mySplit.amount) : '—'}</td>
-                          <td className="px-4 py-3 whitespace-nowrap">{status}</td>
-                          <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
-                            <div className="flex justify-end gap-3">
-                              {!isPayer && mySplit && !mySplit.settled && mySplit.amount > 0 && (
-                                <button type="button" disabled={busyId === mySplit.id} onClick={() => void handleSettle(mySplit, true)} className="text-green-600 hover:text-green-800 dark:text-green-400 disabled:opacity-50">
-                                  Mark paid
-                                </button>
-                              )}
-                              {canManage(expense) && (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setEditing(expense);
-                                      setShowForm(true);
-                                    }}
-                                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400"
-                                  >
-                                    Edit
-                                  </button>
-                                  <button type="button" disabled={busy} onClick={() => void handleDelete(expense)} className="text-red-600 hover:text-red-800 dark:text-red-400 disabled:opacity-50">
-                                    Delete
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                        {expanded && (
-                          <tr className="bg-gray-50 dark:bg-gray-900/40">
-                            <td colSpan={7} className="px-6 py-3">
-                              <ul className="divide-y divide-gray-200 dark:divide-gray-700">
-                                {expense.splits.map((split) => {
-                                  const isPayerShare = split.userId === expense.paidBy;
-                                  const canToggle = !isPayerShare && (canManage(expense) || split.userId === currentUserId);
-                                  return (
-                                    <li key={split.id} className="py-2 flex items-center justify-between gap-4 text-sm">
-                                      <span className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
-                                        <Avatar src={split.avatar} name={split.userName} size={24} />
-                                        {split.userId === currentUserId ? 'You' : split.userName}
-                                        {isPayerShare && <span className="text-xs text-gray-400">(paid)</span>}
-                                      </span>
-                                      <span className="flex items-center gap-4">
-                                        <span className="text-gray-900 dark:text-white">{formatCurrency(split.amount)}</span>
-                                        {isPayerShare ? (
-                                          <span className="text-xs text-gray-400 w-20 text-right">—</span>
-                                        ) : split.settled ? (
-                                          <span className="text-xs text-green-600 dark:text-green-400 w-20 text-right">
-                                            Settled{split.settledAt ? ` ${formatDate(split.settledAt)}` : ''}
-                                          </span>
-                                        ) : (
-                                          <span className="text-xs text-yellow-700 dark:text-yellow-300 w-20 text-right">Owes</span>
-                                        )}
-                                        {canToggle && split.amount > 0 && (
-                                          <button
-                                            type="button"
-                                            disabled={busyId === split.id}
-                                            onClick={() => void handleSettle(split, !split.settled)}
-                                            className="text-xs text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 w-20 text-right"
-                                          >
-                                            {split.settled ? 'Undo' : 'Mark paid'}
-                                          </button>
-                                        )}
-                                      </span>
-                                    </li>
-                                  );
-                                })}
-                              </ul>
-                            </td>
-                          </tr>
-                        )}
-                      </FragmentRow>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {showForm && (
-        <div className="fixed inset-0 z-50 overflow-y-auto" role="dialog" aria-modal="true">
-          <div className="flex items-center justify-center min-h-screen px-4 py-8">
-            <div
-              className="fixed inset-0 bg-gray-500 bg-opacity-75"
-              onClick={() => {
-                setShowForm(false);
-                setEditing(null);
-              }}
-            />
-            <div className="relative bg-white dark:bg-gray-800 rounded-lg max-w-lg w-full p-6 shadow-xl">
-              <div className="flex justify-between items-start mb-2">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white">{editing ? 'Edit expense' : 'Add expense'}</h3>
-                <button
-                  type="button"
-                  className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
-                  onClick={() => {
-                    setShowForm(false);
-                    setEditing(null);
-                  }}
-                  aria-label="Close"
-                >
-                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-              <ExpenseForm
-                expense={editing}
-                members={members}
-                householdId={householdId}
-                currentUserId={currentUserId}
-                onSubmit={handleSubmit}
-                onCancel={() => {
-                  setShowForm(false);
-                  setEditing(null);
-                }}
-              />
-            </div>
-          </div>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="space-y-4 lg:col-span-2">
+          <Segmented
+            ariaLabel="Filter expenses"
+            value={filter}
+            onChange={setFilter}
+            options={[
+              { value: 'ALL', label: 'All', count: counts.ALL },
+              { value: 'PAID_BY_ME', label: 'You paid', count: counts.PAID_BY_ME },
+              { value: 'I_OWE', label: 'You owe', count: counts.I_OWE },
+              { value: 'SETTLED', label: 'Settled', count: counts.SETTLED },
+            ]}
+          />
+          <ExpenseList
+            expenses={visible}
+            filter={filter}
+            currentUserId={currentUserId}
+            busyId={busyId}
+            canManage={canManage}
+            onEdit={(expense) => openForm(expense)}
+            onDelete={(expense) => void handleDelete(expense)}
+            onSettle={(split, settled) => void handleSettle(split, settled)}
+            onAdd={() => openForm(null)}
+          />
         </div>
-      )}
+        <div>
+          <PaymentMatrix householdId={householdId} balances={balances} currentUserId={currentUserId} initialView={initialView} onSettled={load} />
+        </div>
+      </div>
+
+      <Modal
+        open={showForm}
+        onClose={closeForm}
+        title={editing ? 'Edit expense' : 'Add expense'}
+        description={editing ? 'Changes post a correction to the ledger.' : 'Split it now and balances update instantly.'}
+        size="lg"
+      >
+        {showForm && (
+          <ExpenseForm key={editing?.id ?? 'new'} expense={editing} members={members} householdId={householdId} currentUserId={currentUserId} onSubmit={handleSubmit} onCancel={closeForm} />
+        )}
+      </Modal>
     </div>
   );
 }
 
-/** React fragments cannot carry keys inside .map() with the shorthand, so use the explicit form. */
-function FragmentRow({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
+function StatCard({ icon, tone, label, value, hint }: { icon: React.ReactNode; tone: string; label: string; value: string; hint?: string }) {
+  return (
+    <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-card dark:border-slate-800 dark:bg-slate-900">
+      <span className={cn('flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl', tone)}>{icon}</span>
+      <div className="min-w-0">
+        <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
+        <p className="text-xl font-semibold tabular-nums text-slate-900 dark:text-white">{value}</p>
+        {hint && <p className="truncate text-xs text-slate-400 dark:text-slate-500">{hint}</p>}
+      </div>
+    </div>
+  );
+}
+
+function ExpensesSkeleton() {
+  return (
+    <div className="space-y-6" aria-busy="true">
+      <div className="space-y-2">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="h-8 w-48" />
+      </div>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Skeleton className="h-20 rounded-2xl" />
+        <Skeleton className="h-20 rounded-2xl" />
+        <Skeleton className="h-20 rounded-2xl" />
+      </div>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="space-y-4 lg:col-span-2">
+          <Skeleton className="h-10 w-72 rounded-xl" />
+          <SkeletonCard lines={6} />
+        </div>
+        <SkeletonCard lines={5} />
+      </div>
+    </div>
+  );
 }

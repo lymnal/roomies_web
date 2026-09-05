@@ -6,7 +6,8 @@
 import { useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabaseClient } from '@/lib/supabase';
-import { FullPageSpinner } from '@/components/ui/Spinner';
+import Logo from '@/components/ui/Logo';
+import Spinner from '@/components/ui/Spinner';
 
 function safeNext(value: string | null): string {
   return value && value.startsWith('/') && !value.startsWith('//') ? value : '/dashboard';
@@ -43,19 +44,17 @@ function AuthCallbackContent() {
   }, [router, searchParams]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-900">
-      <div className="text-center space-y-4">
-        <h1 className="text-3xl font-bold text-blue-600 dark:text-blue-400">Roomies</h1>
-        <p className="text-gray-600 dark:text-gray-400">Signing you in…</p>
-        <FullPageSpinner />
-      </div>
+    <div className="flex min-h-screen flex-col items-center justify-center gap-5 bg-slate-50 dark:bg-slate-950">
+      <Logo size="lg" className="text-slate-900 dark:text-white" />
+      <Spinner size="md" />
+      <p className="text-sm text-slate-500 dark:text-slate-400">Signing you in…</p>
     </div>
   );
 }
 
 export default function AuthCallbackPage() {
   return (
-    <Suspense fallback={<FullPageSpinner />}>
+    <Suspense fallback={<div className="min-h-screen bg-slate-50 dark:bg-slate-950" />}>
       <AuthCallbackContent />
     </Suspense>
   );

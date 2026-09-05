@@ -4,9 +4,13 @@
 import { useMemo, useState } from 'react';
 import { errorMessage } from '@/lib/api-client';
 import { splitByPercentage, splitEqually, splitsMatchTotal, sumSplits } from '@/lib/splits';
-import { formatCurrency, roundCents, todayISODate } from '@/lib/utils';
+import { cn, formatCurrency, roundCents, todayISODate } from '@/lib/utils';
 import type { Expense, ExpenseInput, Member } from '@/types';
 import Alert from '@/components/ui/Alert';
+import Avatar from '@/components/ui/Avatar';
+import Button from '@/components/ui/Button';
+import { FormField, Input, Select } from '@/components/ui/Field';
+import Segmented from '@/components/ui/Segmented';
 
 type SplitType = 'EQUAL' | 'PERCENTAGE' | 'CUSTOM';
 
@@ -19,10 +23,8 @@ interface ExpenseFormProps {
   onCancel: () => void;
 }
 
-const inputClass =
-  'w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white';
-const smallInputClass =
-  'w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-600 dark:border-gray-500 dark:text-white disabled:bg-gray-100 dark:disabled:bg-gray-700 disabled:cursor-not-allowed';
+const smallInput =
+  'h-8 w-full rounded-md border border-slate-300 bg-white px-2 text-right text-sm tabular-nums text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:bg-slate-50 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:disabled:bg-slate-800';
 
 function initialSplitType(expense: Expense | null): SplitType {
   if (!expense || expense.splits.length === 0) return 'EQUAL';
@@ -64,6 +66,7 @@ export default function ExpenseForm({ expense, members, householdId, currentUser
   const splitTotal = sumSplits(includedIds, computedSplits);
   const percentTotal = roundCents(includedIds.reduce((sum, id) => sum + (percentages[id] ?? 0), 0));
   const totalsMatch = splitsMatchTotal(amount, includedIds, computedSplits);
+  const allIncluded = includedIds.length === members.length;
 
   const toggleIncluded = (userId: string) => {
     setIncluded((prev) => (prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]));
@@ -105,118 +108,137 @@ export default function ExpenseForm({ expense, members, householdId, currentUser
   };
 
   return (
-    <form onSubmit={handleSubmit} className="mt-3 space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-5" noValidate>
       {error && <Alert kind="error">{error}</Alert>}
 
+      <FormField label="What was it for?" htmlFor="expense-title">
+        <Input id="expense-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Groceries, rent, internet…" required maxLength={200} autoFocus autoComplete="off" />
+      </FormField>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <FormField label="Amount" htmlFor="expense-amount">
+          <div className="relative">
+            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-slate-400">$</span>
+            <Input
+              id="expense-amount"
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              min="0.01"
+              value={amountText}
+              onChange={(e) => setAmountText(e.target.value)}
+              placeholder="0.00"
+              required
+              className="pl-7 text-lg font-semibold tabular-nums"
+            />
+          </div>
+        </FormField>
+        <FormField label="Date" htmlFor="expense-date">
+          <Input id="expense-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required max={todayISODate()} />
+        </FormField>
+      </div>
+
+      <FormField label="Paid by" htmlFor="expense-paid-by">
+        <Select id="expense-paid-by" value={paidBy} onChange={(e) => setPaidBy(e.target.value)}>
+          {members.map((m) => (
+            <option key={m.userId} value={m.userId}>
+              {m.userId === currentUserId ? `You (${m.name})` : m.name}
+            </option>
+          ))}
+        </Select>
+      </FormField>
+
       <div>
-        <label htmlFor="expense-title" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          What was it for?
-        </label>
-        <input id="expense-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Groceries, Rent, Internet" required maxLength={200} className={inputClass} />
+        <p className="mb-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">Split</p>
+        <Segmented
+          ariaLabel="Split method"
+          value={splitType}
+          onChange={setSplitType}
+          options={[
+            { value: 'EQUAL', label: 'Equally' },
+            { value: 'PERCENTAGE', label: 'By percentage' },
+            { value: 'CUSTOM', label: 'Custom amounts' },
+          ]}
+        />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label htmlFor="expense-amount" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Amount ($)
-          </label>
-          <input id="expense-amount" type="number" inputMode="decimal" step="0.01" min="0.01" value={amountText} onChange={(e) => setAmountText(e.target.value)} placeholder="0.00" required className={inputClass} />
+      <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2 dark:border-slate-800 dark:bg-slate-800/60">
+          <span className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Split between</span>
+          <button type="button" className="text-xs font-medium text-brand-600 hover:underline dark:text-brand-400" onClick={() => setIncluded(allIncluded ? [] : members.map((m) => m.userId))}>
+            {allIncluded ? 'Clear' : 'Everyone'}
+          </button>
         </div>
-        <div>
-          <label htmlFor="expense-date" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Date
-          </label>
-          <input id="expense-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required className={inputClass} />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label htmlFor="expense-paid-by" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Paid by
-          </label>
-          <select id="expense-paid-by" value={paidBy} onChange={(e) => setPaidBy(e.target.value)} className={inputClass}>
-            {members.map((m) => (
-              <option key={m.userId} value={m.userId}>
-                {m.userId === currentUserId ? `You (${m.name})` : m.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="expense-split-type" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Split
-          </label>
-          <select id="expense-split-type" value={splitType} onChange={(e) => setSplitType(e.target.value as SplitType)} className={inputClass}>
-            <option value="EQUAL">Equally</option>
-            <option value="PERCENTAGE">By percentage</option>
-            <option value="CUSTOM">Custom amounts</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-md">
-        <div className={`grid ${splitType === 'PERCENTAGE' ? 'grid-cols-[auto_1fr_5rem_6rem]' : 'grid-cols-[auto_1fr_6rem]'} gap-2 mb-2 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase`}>
-          <div />
-          <div>Member</div>
-          {splitType === 'PERCENTAGE' && <div>%</div>}
-          <div className="text-right">Share</div>
-        </div>
-        {members.map((member) => {
-          const isIncluded = included.includes(member.userId);
-          return (
-            <div key={member.userId} className={`grid ${splitType === 'PERCENTAGE' ? 'grid-cols-[auto_1fr_5rem_6rem]' : 'grid-cols-[auto_1fr_6rem]'} gap-2 mb-2 items-center`}>
-              <input type="checkbox" checked={isIncluded} onChange={() => toggleIncluded(member.userId)} className="h-4 w-4 rounded border-gray-300 text-blue-600" aria-label={`Include ${member.name}`} />
-              <div className={`text-sm ${isIncluded ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400'}`}>
-                {member.userId === currentUserId ? 'You' : member.name}
-                {member.userId === paidBy && <span className="ml-1 text-xs text-gray-400">(paid)</span>}
-              </div>
-              {splitType === 'PERCENTAGE' && (
+        <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+          {members.map((member) => {
+            const isIncluded = included.includes(member.userId);
+            return (
+              <li key={member.userId} className={cn('flex items-center gap-3 px-4 py-2.5 transition-opacity', !isIncluded && 'opacity-60')}>
                 <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.01"
-                  disabled={!isIncluded}
-                  value={percentages[member.userId] ?? 0}
-                  onChange={(e) => setPercentages((prev) => ({ ...prev, [member.userId]: Number(e.target.value) || 0 }))}
-                  className={smallInputClass}
-                  aria-label={`${member.name} percentage`}
+                  type="checkbox"
+                  checked={isIncluded}
+                  onChange={() => toggleIncluded(member.userId)}
+                  className="form-checkbox h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 dark:border-slate-600 dark:bg-slate-800"
+                  aria-label={`Include ${member.name}`}
                 />
-              )}
-              {splitType === 'CUSTOM' ? (
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  disabled={!isIncluded}
-                  value={customAmounts[member.userId] ?? ''}
-                  onChange={(e) => setCustomAmounts((prev) => ({ ...prev, [member.userId]: e.target.value }))}
-                  className={`${smallInputClass} text-right`}
-                  aria-label={`${member.name} amount`}
-                />
-              ) : (
-                <div className="text-sm text-right text-gray-800 dark:text-gray-100">{isIncluded ? formatCurrency(computedSplits[member.userId] ?? 0) : '—'}</div>
-              )}
-            </div>
-          );
-        })}
-        <div className="flex justify-between text-sm font-medium pt-2 border-t border-gray-200 dark:border-gray-600 mt-2">
-          <span className="text-gray-700 dark:text-gray-300">Total of shares</span>
-          <span className={totalsMatch ? 'text-gray-900 dark:text-white' : 'text-red-600 dark:text-red-400'}>
+                <Avatar src={member.avatar} name={member.name} size={28} />
+                <span className="min-w-0 flex-1 truncate text-sm text-slate-800 dark:text-slate-100">
+                  {member.userId === currentUserId ? 'You' : member.name}
+                  {member.userId === paidBy && <span className="ml-1.5 text-xs text-slate-400">paid</span>}
+                </span>
+                {splitType === 'PERCENTAGE' && (
+                  <div className="relative w-24">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      disabled={!isIncluded}
+                      value={percentages[member.userId] ?? 0}
+                      onChange={(e) => setPercentages((prev) => ({ ...prev, [member.userId]: Number(e.target.value) || 0 }))}
+                      className={cn(smallInput, 'pr-6')}
+                      aria-label={`${member.name} percentage`}
+                    />
+                    <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-xs text-slate-400">%</span>
+                  </div>
+                )}
+                {splitType === 'CUSTOM' ? (
+                  <div className="relative w-28">
+                    <span className="pointer-events-none absolute inset-y-0 left-2 flex items-center text-xs text-slate-400">$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      disabled={!isIncluded}
+                      value={customAmounts[member.userId] ?? ''}
+                      onChange={(e) => setCustomAmounts((prev) => ({ ...prev, [member.userId]: e.target.value }))}
+                      className={cn(smallInput, 'pl-5')}
+                      aria-label={`${member.name} amount`}
+                    />
+                  </div>
+                ) : (
+                  <span className="w-20 text-right text-sm tabular-nums text-slate-800 dark:text-slate-100">{isIncluded ? formatCurrency(computedSplits[member.userId] ?? 0) : '—'}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-4 py-2.5 text-sm dark:border-slate-800 dark:bg-slate-800/60">
+          <span className="text-slate-500 dark:text-slate-400">Total of shares</span>
+          <span className={cn('font-semibold tabular-nums', totalsMatch ? 'text-slate-900 dark:text-white' : 'text-rose-600 dark:text-rose-400')}>
             {formatCurrency(splitTotal)}
-            {splitType === 'PERCENTAGE' && ` (${percentTotal.toFixed(2)}%)`}
+            {splitType === 'PERCENTAGE' && ` · ${percentTotal.toFixed(percentTotal % 1 === 0 ? 0 : 2)}%`}
           </span>
         </div>
       </div>
 
-      <div className="flex justify-end gap-3 pt-2">
-        <button type="button" onClick={onCancel} disabled={isSubmitting} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600 disabled:opacity-70">
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="outline" onClick={onCancel} disabled={isSubmitting}>
           Cancel
-        </button>
-        <button type="submit" disabled={isSubmitting} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed">
-          {isSubmitting ? 'Saving…' : expense ? 'Save changes' : 'Add expense'}
-        </button>
+        </Button>
+        <Button type="submit" isLoading={isSubmitting}>
+          {expense ? 'Save changes' : 'Add expense'}
+        </Button>
       </div>
     </form>
   );

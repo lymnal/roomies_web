@@ -165,6 +165,21 @@ export interface ChatMessage {
   sender: { id: string; name: string; avatar: string | null } | null;
 }
 
+export interface RecentExpense {
+  id: string;
+  title: string;
+  amount: number;
+  /** YYYY-MM-DD */
+  date: string;
+  paidBy: string;
+  paidByName: string;
+  paidByAvatar: string | null;
+  splitCount: number;
+  /** The viewer's share, or null when they are not part of the split. */
+  myShare: number | null;
+  mySettled: boolean | null;
+}
+
 export interface DashboardSummary {
   household: Household;
   role: HouseholdRole;
@@ -174,4 +189,9 @@ export interface DashboardSummary {
   myOpenTaskCount: number;
   upcomingTasks: Pick<Task, 'id' | 'title' | 'dueDate' | 'priority' | 'status' | 'assigneeName'>[];
   messagesToday: number;
+  /** Ledger balances for every member (drives the settle-up chips). */
+  balances: Balance[];
+  /** Household spend since the first of the month. */
+  monthSpend: number;
+  recentExpenses: RecentExpense[];
 }

@@ -2,11 +2,15 @@
 'use client';
 
 import { useState } from 'react';
+import { HiOutlineClipboardDocument, HiOutlineLink } from 'react-icons/hi2';
 import { errorMessage } from '@/lib/api-client';
 import { createInvitation } from '@/lib/services/invitations';
+import { relativeDay } from '@/lib/utils';
 import type { HouseholdRole } from '@/types';
-import Button from '@/components/ui/Button';
 import Alert from '@/components/ui/Alert';
+import Button from '@/components/ui/Button';
+import { FormField, Input, Select, Textarea } from '@/components/ui/Field';
+import { useToast } from '@/components/ui/Toast';
 
 interface InvitationFormProps {
   householdId: string;
@@ -14,28 +18,22 @@ interface InvitationFormProps {
   onCancel?: () => void;
 }
 
-const inputClass =
-  'w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white';
-
 export default function InvitationForm({ householdId, onInviteSent, onCancel }: InvitationFormProps) {
+  const toast = useToast();
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<HouseholdRole>('member');
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [invitationLink, setInvitationLink] = useState('');
-  const [sentTo, setSentTo] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [created, setCreated] = useState<{ email: string; link: string; expiresAt: string } | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setInvitationLink('');
     setIsSubmitting(true);
     try {
       const result = await createInvitation({ householdId, email: email.trim(), role, message: message.trim() || undefined });
-      setSentTo(email.trim());
-      setInvitationLink(result.invitationLink);
+      setCreated({ email: email.trim(), link: result.invitationLink, expiresAt: result.invitation.expiresAt });
       setEmail('');
       setRole('member');
       setMessage('');
@@ -48,64 +46,75 @@ export default function InvitationForm({ householdId, onInviteSent, onCancel }: 
   };
 
   const copyLink = async () => {
+    if (!created) return;
     try {
-      await navigator.clipboard.writeText(invitationLink);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      await navigator.clipboard.writeText(created.link);
+      toast.success('Invitation link copied', `Send it to ${created.email}.`);
     } catch {
-      // Clipboard unavailable; the link is visible in the input.
+      toast.error('Could not copy the link', 'Select it and copy by hand.');
     }
   };
 
+  if (created) {
+    return (
+      <div className="space-y-4 animate-fade-in">
+        <Alert kind="success" title={`Invitation ready for ${created.email}`}>
+          Email delivery isn&apos;t set up yet, so send them this link yourself. It expires {relativeDay(created.expiresAt)}.
+        </Alert>
+        <div className="flex items-stretch gap-2">
+          <Input readOnly value={created.link} onFocus={(e) => e.currentTarget.select()} className="font-mono text-xs" aria-label="Invitation link" />
+          <Button variant="outline" leftIcon={<HiOutlineClipboardDocument className="h-4 w-4" />} onClick={() => void copyLink()}>
+            Copy
+          </Button>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setCreated(null)}>
+            Invite someone else
+          </Button>
+          {onCancel && <Button onClick={onCancel}>Done</Button>}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4" noValidate>
       {error && <Alert kind="error">{error}</Alert>}
 
-      {invitationLink && (
-        <Alert kind="success">
-          <p>Invitation created for {sentTo}.</p>
-          <p className="mt-1 text-xs">Email delivery isn&apos;t set up yet, so share this link with them directly:</p>
-          <div className="mt-2 flex">
-            <input type="text" readOnly value={invitationLink} className="flex-1 p-2 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-l-md" onFocus={(e) => e.currentTarget.select()} />
-            <button type="button" onClick={() => void copyLink()} className="px-3 py-2 text-xs bg-blue-600 text-white rounded-r-md hover:bg-blue-700">
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-          </div>
-        </Alert>
-      )}
+      <FormField label="Email address" htmlFor="invite-email">
+        <Input id="invite-email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="roommate@example.com" required />
+      </FormField>
 
-      <div>
-        <label htmlFor="invite-email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Email address
-        </label>
-        <input id="invite-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="roommate@example.com" required className={inputClass} />
-      </div>
+      <FormField
+        label="Role"
+        htmlFor="invite-role"
+        hint={role === 'admin' ? 'Admins also manage members, the join code and household details.' : 'Members add expenses, tasks and messages.'}
+      >
+        <Select id="invite-role" value={role} onChange={(e) => setRole(e.target.value as HouseholdRole)}>
+          <option value="member">Member</option>
+          <option value="admin">Admin</option>
+        </Select>
+      </FormField>
 
-      <div>
-        <label htmlFor="invite-role" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Role
-        </label>
-        <select id="invite-role" value={role} onChange={(e) => setRole(e.target.value as HouseholdRole)} className={inputClass}>
-          <option value="member">Member — adds expenses, tasks and messages</option>
-          <option value="admin">Admin — also manages members and settings</option>
-        </select>
-      </div>
+      <FormField label="Personal message" htmlFor="invite-message" optional>
+        <Textarea
+          id="invite-message"
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          rows={3}
+          maxLength={500}
+          placeholder="Hey! Join our place on Roomies so we can split the bills."
+        />
+      </FormField>
 
-      <div>
-        <label htmlFor="invite-message" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Personal message <span className="text-gray-400">(optional)</span>
-        </label>
-        <textarea id="invite-message" value={message} onChange={(e) => setMessage(e.target.value)} rows={3} maxLength={500} className={inputClass} />
-      </div>
-
-      <div className="flex justify-end space-x-3 pt-2">
+      <div className="flex justify-end gap-2 pt-1">
         {onCancel && (
-          <Button type="button" variant="outline" onClick={onCancel}>
+          <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
         )}
-        <Button type="submit" variant="primary" isLoading={isSubmitting} disabled={isSubmitting}>
-          Create invitation
+        <Button type="submit" isLoading={isSubmitting} disabled={!email.trim()} leftIcon={<HiOutlineLink className="h-4 w-4" />}>
+          Create invitation link
         </Button>
       </div>
     </form>

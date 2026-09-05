@@ -2,13 +2,14 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useHousehold } from '@/context/HouseholdContext';
+import { usePageTitle } from '@/hooks/usePageTitle';
 import { errorMessage } from '@/lib/api-client';
 import { fetchMembers } from '@/lib/services/households';
 import type { Member } from '@/types';
+import HouseholdRequired from '@/components/dashboard/HouseholdRequired';
 import TasksClientPage from '@/components/tasks/TasksClientPage';
 import Alert from '@/components/ui/Alert';
 import { FullPageSpinner } from '@/components/ui/Spinner';
@@ -22,6 +23,7 @@ export default function TasksPage() {
 }
 
 function TasksGate() {
+  usePageTitle('Tasks');
   const { current, loading } = useHousehold();
   const { user } = useAuth();
   const searchParams = useSearchParams();
@@ -47,19 +49,19 @@ function TasksGate() {
   }, [householdId]);
 
   if (loading || !user) return <FullPageSpinner />;
-  if (!current) {
-    return (
-      <Alert kind="info">
-        You are not in a household yet.{' '}
-        <Link href="/dashboard" className="underline">
-          Create or join one
-        </Link>{' '}
-        to start assigning tasks.
-      </Alert>
-    );
-  }
+  if (!current) return <HouseholdRequired feature="assigning tasks" />;
   if (error) return <Alert kind="error">{error}</Alert>;
   if (!members) return <FullPageSpinner />;
 
-  return <TasksClientPage key={current.id} householdId={current.id} members={members} currentUserId={user.id} viewerRole={current.role} openNew={searchParams.get('new') === '1'} />;
+  return (
+    <TasksClientPage
+      key={current.id}
+      householdId={current.id}
+      householdName={current.name}
+      members={members}
+      currentUserId={user.id}
+      viewerRole={current.role}
+      openNew={searchParams.get('new') === '1'}
+    />
+  );
 }

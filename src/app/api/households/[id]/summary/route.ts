@@ -1,13 +1,24 @@
 // src/app/api/households/[id]/summary/route.ts
 import { NextResponse } from 'next/server';
 import { withAuthParams, errorResponse, dbErrorResponse, requireMembership, requireUuid } from '@/lib/supabase-server';
-import { HOUSEHOLD_SELECT, one, toBalance, toHousehold, type BalanceRow, type HouseholdRow, type ProfileRow } from '@/lib/serializers';
+import {
+  EXPENSE_SELECT,
+  HOUSEHOLD_SELECT,
+  one,
+  toBalance,
+  toExpense,
+  toHousehold,
+  type BalanceRow,
+  type ExpenseRow,
+  type HouseholdRow,
+  type ProfileRow,
+} from '@/lib/serializers';
 import { countRows } from '@/lib/queries';
-import type { DashboardSummary } from '@/types';
+import type { DashboardSummary, RecentExpense } from '@/types';
 
 type Params = { id: string };
 
-interface PendingShareRow {
+interface AmountRow {
   amount: number | string;
 }
 
@@ -33,10 +44,12 @@ export const GET = withAuthParams<Params>(async (_request, { user, supabase, par
   if (householdError) return dbErrorResponse(householdError, 'Failed to load household');
   if (!householdRow) return errorResponse('Household not found', 404);
 
-  const startOfToday = new Date();
+  const now = new Date();
+  const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);
+  const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
 
-  const [memberCount, pendingShares, myOpenTaskCount, upcoming, messagesToday, balances] = await Promise.all([
+  const [memberCount, pendingShares, myOpenTaskCount, upcoming, messagesToday, balances, recent, monthRows] = await Promise.all([
     countRows(supabase, 'household_members', { household_id: householdId }),
     supabase
       .from('expense_splits')
@@ -57,10 +70,37 @@ export const GET = withAuthParams<Params>(async (_request, { user, supabase, par
       .limit(5),
     countRows(supabase, 'messages', { household_id: householdId }, (q) => q.gte('created_at', startOfToday.toISOString())),
     supabase.rpc('get_household_balances_simple', { p_household_id: householdId }),
+    supabase
+      .from('expenses')
+      .select(EXPENSE_SELECT)
+      .eq('household_id', householdId)
+      .order('date', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(5),
+    supabase.from('expenses').select('amount').eq('household_id', householdId).gte('date', monthStart),
   ]);
 
-  const shares = ((pendingShares.data ?? []) as unknown as PendingShareRow[]).map((s) => Number(s.amount));
-  const myBalance = ((balances.data ?? []) as BalanceRow[]).map(toBalance).find((b) => b.userId === user.id)?.net ?? 0;
+  const shares = ((pendingShares.data ?? []) as unknown as AmountRow[]).map((s) => Number(s.amount));
+  const balanceList = ((balances.data ?? []) as BalanceRow[]).map(toBalance);
+  const myBalance = balanceList.find((b) => b.userId === user.id)?.net ?? 0;
+
+  const recentExpenses: RecentExpense[] = ((recent.data ?? []) as unknown as ExpenseRow[]).map(toExpense).map((expense) => {
+    const mine = expense.splits.find((s) => s.userId === user.id);
+    return {
+      id: expense.id,
+      title: expense.title,
+      amount: expense.amount,
+      date: expense.date,
+      paidBy: expense.paidBy,
+      paidByName: expense.paidByName,
+      paidByAvatar: expense.paidByAvatar,
+      splitCount: expense.splits.length,
+      myShare: mine ? mine.amount : null,
+      mySettled: mine ? mine.settled : null,
+    };
+  });
+
+  const monthSpend = Math.round(((monthRows.data ?? []) as AmountRow[]).reduce((sum, row) => sum + Number(row.amount), 0) * 100) / 100;
 
   const summary: DashboardSummary = {
     household: toHousehold(householdRow as unknown as HouseholdRow, membership.role),
@@ -81,6 +121,9 @@ export const GET = withAuthParams<Params>(async (_request, { user, supabase, par
       assigneeName: one(t.assignee)?.name ?? null,
     })),
     messagesToday,
+    balances: balanceList,
+    monthSpend,
+    recentExpenses,
   };
 
   return NextResponse.json(summary);

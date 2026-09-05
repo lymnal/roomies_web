@@ -3,14 +3,21 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { HiOutlineEllipsisHorizontal, HiOutlineUserPlus } from 'react-icons/hi2';
 import { errorMessage } from '@/lib/api-client';
 import { fetchMembers, removeMember, updateMemberRole } from '@/lib/services/households';
 import { fetchBalances } from '@/lib/services/expenses';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { cn, formatCurrency, formatDate } from '@/lib/utils';
 import type { Balance, HouseholdRole, Member } from '@/types';
-import Avatar from '@/components/ui/Avatar';
 import Alert from '@/components/ui/Alert';
-import Spinner from '@/components/ui/Spinner';
+import Avatar from '@/components/ui/Avatar';
+import Badge from '@/components/ui/Badge';
+import Button from '@/components/ui/Button';
+import Card from '@/components/ui/Card';
+import { useConfirm } from '@/components/ui/Confirm';
+import Menu, { type MenuItem } from '@/components/ui/Menu';
+import { SkeletonList } from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
 
 interface MemberGridProps {
   householdId: string;
@@ -22,6 +29,8 @@ interface MemberGridProps {
 
 export default function MemberGrid({ householdId, currentUserId, viewerRole, onInvite, onChanged }: MemberGridProps) {
   const router = useRouter();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [members, setMembers] = useState<Member[]>([]);
   const [balances, setBalances] = useState<Record<string, Balance>>({});
   const [loading, setLoading] = useState(true);
@@ -48,13 +57,13 @@ export default function MemberGrid({ householdId, currentUserId, viewerRole, onI
 
   const changeRole = async (member: Member, role: HouseholdRole) => {
     setBusyUserId(member.userId);
-    setError('');
     try {
       await updateMemberRole(householdId, member.userId, role);
       await load();
       onChanged?.();
+      toast.success(role === 'admin' ? `${member.name} is now an admin` : `${member.name} is now a member`);
     } catch (err) {
-      setError(errorMessage(err, 'Failed to update role'));
+      toast.error(errorMessage(err, 'Failed to update role'));
     } finally {
       setBusyUserId(null);
     }
@@ -62,21 +71,30 @@ export default function MemberGrid({ householdId, currentUserId, viewerRole, onI
 
   const remove = async (member: Member) => {
     const isSelf = member.userId === currentUserId;
-    const ok = window.confirm(isSelf ? 'Leave this household?' : `Remove ${member.name} from the household?`);
+    const ok = await confirm({
+      title: isSelf ? 'Leave this household?' : `Remove ${member.name}?`,
+      description: isSelf
+        ? 'You lose access to its expenses, tasks and chat. Expenses you paid stay in the ledger.'
+        : `${member.name} loses access to the household. Their expenses stay in the ledger.`,
+      confirmLabel: isSelf ? 'Leave household' : 'Remove',
+      tone: 'danger',
+    });
     if (!ok) return;
     setBusyUserId(member.userId);
-    setError('');
     try {
       await removeMember(householdId, member.userId);
       if (isSelf) {
+        toast.success('You left the household');
+        onChanged?.();
         router.push('/dashboard');
         router.refresh();
         return;
       }
       await load();
       onChanged?.();
+      toast.success(`${member.name} removed`);
     } catch (err) {
-      setError(errorMessage(err, 'Failed to remove member'));
+      toast.error(errorMessage(err, 'Failed to remove member'));
     } finally {
       setBusyUserId(null);
     }
@@ -84,24 +102,36 @@ export default function MemberGrid({ householdId, currentUserId, viewerRole, onI
 
   const isAdmin = viewerRole === 'admin';
 
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md">
-      <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white">Household members</h3>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            {members.length} {members.length === 1 ? 'member' : 'members'}
-          </p>
-        </div>
-        {onInvite && (
-          <button type="button" onClick={onInvite} className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700">
-            + Invite
-          </button>
-        )}
-      </div>
+  const menuFor = (member: Member): MenuItem[] => {
+    const isSelf = member.userId === currentUserId;
+    const items: MenuItem[] = [];
+    if (isAdmin && !isSelf) {
+      items.push({
+        label: member.role === 'admin' ? 'Make member' : 'Make admin',
+        onSelect: () => void changeRole(member, member.role === 'admin' ? 'member' : 'admin'),
+      });
+      items.push({ label: 'Remove from household', tone: 'danger', onSelect: () => void remove(member) });
+    } else if (isSelf) {
+      items.push({ label: 'Leave household', tone: 'danger', onSelect: () => void remove(member) });
+    }
+    return items;
+  };
 
+  return (
+    <Card
+      title="Members"
+      description={loading ? 'Loading…' : `${members.length} ${members.length === 1 ? 'person' : 'people'} share this home`}
+      actions={
+        onInvite && (
+          <Button size="sm" leftIcon={<HiOutlineUserPlus className="h-4 w-4" />} onClick={onInvite}>
+            Invite
+          </Button>
+        )
+      }
+      noPadding
+    >
       {error && (
-        <div className="px-6 pt-4">
+        <div className="px-5 pt-4">
           <Alert kind="error" onDismiss={() => setError('')}>
             {error}
           </Alert>
@@ -109,59 +139,54 @@ export default function MemberGrid({ householdId, currentUserId, viewerRole, onI
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center h-32">
-          <Spinner />
-        </div>
+        <SkeletonList rows={3} className="p-5" />
       ) : (
-        <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+        <ul className="divide-y divide-slate-100 dark:divide-slate-800">
           {members.map((member) => {
             const balance = balances[member.userId];
             const isSelf = member.userId === currentUserId;
             const busy = busyUserId === member.userId;
+            const items = menuFor(member);
             return (
-              <li key={member.id} className="px-6 py-4 flex items-center gap-4">
-                <Avatar src={member.avatar} name={member.name} size={48} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h4 className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                      {member.name}
-                      {isSelf && <span className="text-gray-400"> (you)</span>}
-                    </h4>
-                    <span
-                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                        member.role === 'admin' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300' : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
-                      }`}
-                    >
-                      {member.role}
-                    </span>
+              <li key={member.id} className={cn('flex items-center gap-3 px-5 py-3 transition-opacity', busy && 'opacity-60')}>
+                <Avatar src={member.avatar} name={member.name} size={44} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <p className="truncate text-sm font-medium text-slate-900 dark:text-white">{member.name}</p>
+                    {isSelf && <Badge tone="brand">You</Badge>}
+                    {member.role === 'admin' && <Badge tone="purple">Admin</Badge>}
                   </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
                     {member.email}
                     {member.joinedAt ? ` · joined ${formatDate(member.joinedAt)}` : ''}
                   </p>
-                  {balance && (
-                    <p className={`mt-1 text-xs ${balance.net > 0 ? 'text-green-600 dark:text-green-400' : balance.net < 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}>
-                      {balance.net > 0 ? `Is owed ${formatCurrency(balance.net)}` : balance.net < 0 ? `Owes ${formatCurrency(-balance.net)}` : 'Settled up'}
-                    </p>
-                  )}
                 </div>
-                {(isAdmin || isSelf) && (
-                  <div className="flex items-center gap-2 text-xs flex-shrink-0">
-                    {isAdmin && !isSelf && (
-                      <button type="button" disabled={busy} onClick={() => void changeRole(member, member.role === 'admin' ? 'member' : 'admin')} className="text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50">
-                        {member.role === 'admin' ? 'Make member' : 'Make admin'}
-                      </button>
+                {balance && (
+                  <p
+                    className={cn(
+                      'hidden flex-shrink-0 text-sm font-medium tabular-nums sm:block',
+                      balance.net > 0.004 ? 'text-emerald-600 dark:text-emerald-400' : balance.net < -0.004 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'
                     )}
-                    <button type="button" disabled={busy} onClick={() => void remove(member)} className="text-red-600 dark:text-red-400 hover:underline disabled:opacity-50">
-                      {isSelf ? 'Leave' : 'Remove'}
-                    </button>
-                  </div>
+                  >
+                    {balance.net > 0.004 ? `+${formatCurrency(balance.net)}` : balance.net < -0.004 ? `−${formatCurrency(-balance.net)}` : 'settled'}
+                  </p>
+                )}
+                {items.length > 0 && (
+                  <Menu
+                    ariaLabel={`Actions for ${member.name}`}
+                    items={items}
+                    trigger={() => (
+                      <span className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+                        <HiOutlineEllipsisHorizontal className="h-5 w-5" />
+                      </span>
+                    )}
+                  />
                 )}
               </li>
             );
           })}
         </ul>
       )}
-    </div>
+    </Card>
   );
 }

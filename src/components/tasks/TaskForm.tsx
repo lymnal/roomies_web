@@ -6,6 +6,9 @@ import { errorMessage } from '@/lib/api-client';
 import { toDateInputValue } from '@/lib/utils';
 import type { Member, RecurrenceRule, Task, TaskInput, TaskPriority, TaskStatus } from '@/types';
 import Alert from '@/components/ui/Alert';
+import Button from '@/components/ui/Button';
+import { Checkbox, FormField, Input, Select, Textarea } from '@/components/ui/Field';
+import Segmented from '@/components/ui/Segmented';
 
 interface TaskFormProps {
   task: Task | null;
@@ -14,9 +17,6 @@ interface TaskFormProps {
   onSubmit: (input: TaskInput & { title: string }) => Promise<void>;
   onCancel: () => void;
 }
-
-const inputClass =
-  'w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white';
 
 export default function TaskForm({ task, members, currentUserId, onSubmit, onCancel }: TaskFormProps) {
   const [title, setTitle] = useState(task?.title ?? '');
@@ -57,98 +57,82 @@ export default function TaskForm({ task, members, currentUserId, onSubmit, onCan
   };
 
   return (
-    <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-5" noValidate>
       {error && <Alert kind="error">{error}</Alert>}
 
-      <div>
-        <label htmlFor="task-title" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Title
-        </label>
-        <input id="task-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Clean the kitchen, Take out the trash" required maxLength={200} className={inputClass} />
-      </div>
+      <FormField label="Title" htmlFor="task-title">
+        <Input id="task-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Clean the kitchen, take out the trash…" required maxLength={200} autoFocus autoComplete="off" />
+      </FormField>
 
-      <div>
-        <label htmlFor="task-description" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Details <span className="text-gray-400">(optional)</span>
-        </label>
-        <textarea id="task-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} maxLength={2000} className={inputClass} />
-      </div>
+      <FormField label="Details" htmlFor="task-description" optional>
+        <Textarea id="task-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} maxLength={2000} placeholder="Anything the person doing it should know." />
+      </FormField>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label htmlFor="task-assignee" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Assign to
-          </label>
-          <select id="task-assignee" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className={inputClass}>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <FormField label="Assign to" htmlFor="task-assignee">
+          <Select id="task-assignee" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
             <option value="">Unassigned</option>
             {members.map((member) => (
               <option key={member.userId} value={member.userId}>
                 {member.userId === currentUserId ? `You (${member.name})` : member.name}
               </option>
             ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="task-priority" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Priority
-          </label>
-          <select id="task-priority" value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)} className={inputClass}>
-            <option value="LOW">Low</option>
-            <option value="MEDIUM">Medium</option>
-            <option value="HIGH">High</option>
-            <option value="URGENT">Urgent</option>
-          </select>
-        </div>
+          </Select>
+        </FormField>
+        <FormField label="Due date" htmlFor="task-due" optional>
+          <Input id="task-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+        </FormField>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label htmlFor="task-due" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Due date
-          </label>
-          <input id="task-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputClass} />
-        </div>
-        <div>
-          <label htmlFor="task-status" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Status
-          </label>
-          <select id="task-status" value={status} onChange={(e) => setStatus(e.target.value as TaskStatus)} className={inputClass}>
+      <div>
+        <p className="mb-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">Priority</p>
+        <Segmented
+          ariaLabel="Priority"
+          value={priority}
+          onChange={setPriority}
+          options={[
+            { value: 'LOW', label: 'Low' },
+            { value: 'MEDIUM', label: 'Medium' },
+            { value: 'HIGH', label: 'High' },
+            { value: 'URGENT', label: 'Urgent' },
+          ]}
+        />
+      </div>
+
+      {task && (
+        <FormField label="Status" htmlFor="task-status">
+          <Select id="task-status" value={status} onChange={(e) => setStatus(e.target.value as TaskStatus)}>
             <option value="PENDING">Pending</option>
             <option value="IN_PROGRESS">In progress</option>
             <option value="COMPLETED">Completed</option>
             <option value="SKIPPED">Skipped</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="flex items-center">
-        <input id="task-recurring" type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} className="h-4 w-4 text-blue-600 border-gray-300 rounded" />
-        <label htmlFor="task-recurring" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-          Recurring task
-        </label>
-      </div>
-
-      {recurring && (
-        <div>
-          <label htmlFor="task-recurrence" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Repeats
-          </label>
-          <select id="task-recurrence" value={recurrenceRule} onChange={(e) => setRecurrenceRule(e.target.value as RecurrenceRule)} className={inputClass}>
-            <option value="DAILY">Daily</option>
-            <option value="WEEKLY">Weekly</option>
-            <option value="BIWEEKLY">Every 2 weeks</option>
-            <option value="MONTHLY">Monthly</option>
-          </select>
-        </div>
+          </Select>
+        </FormField>
       )}
 
-      <div className="flex justify-end gap-3 pt-2">
-        <button type="button" onClick={onCancel} disabled={isSubmitting} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600 disabled:opacity-70">
+      <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+        <Checkbox id="task-recurring" label="Repeats on a schedule" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} />
+        {recurring && (
+          <div className="mt-3">
+            <FormField label="Repeats" htmlFor="task-recurrence">
+              <Select id="task-recurrence" value={recurrenceRule} onChange={(e) => setRecurrenceRule(e.target.value as RecurrenceRule)}>
+                <option value="DAILY">Daily</option>
+                <option value="WEEKLY">Weekly</option>
+                <option value="BIWEEKLY">Every 2 weeks</option>
+                <option value="MONTHLY">Monthly</option>
+              </Select>
+            </FormField>
+          </div>
+        )}
+      </div>
+
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="outline" onClick={onCancel} disabled={isSubmitting}>
           Cancel
-        </button>
-        <button type="submit" disabled={isSubmitting} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed">
-          {isSubmitting ? 'Saving…' : task ? 'Save changes' : 'Create task'}
-        </button>
+        </Button>
+        <Button type="submit" isLoading={isSubmitting}>
+          {task ? 'Save changes' : 'Create task'}
+        </Button>
       </div>
     </form>
   );

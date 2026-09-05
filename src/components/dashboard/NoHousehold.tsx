@@ -3,17 +3,20 @@
 'use client';
 
 import { useState } from 'react';
+import { HiOutlineHomeModern, HiOutlineKey, HiOutlinePlus } from 'react-icons/hi2';
 import { errorMessage } from '@/lib/api-client';
 import { createHousehold, joinHousehold } from '@/lib/services/households';
-import Button from '@/components/ui/Button';
-import Card from '@/components/ui/Card';
 import Alert from '@/components/ui/Alert';
+import Button from '@/components/ui/Button';
+import { FormField, Input } from '@/components/ui/Field';
 import UserInvitationsList from '@/components/invitations/UserInvitationsList';
 
-const inputClass =
-  'w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white';
+interface NoHouseholdProps {
+  onJoined: (householdId: string) => void | Promise<void>;
+  title?: string;
+}
 
-export default function NoHousehold({ onJoined }: { onJoined: (householdId: string) => void }) {
+export default function NoHousehold({ onJoined, title = 'Welcome to Roomies' }: NoHouseholdProps) {
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [code, setCode] = useState('');
@@ -28,7 +31,7 @@ export default function NoHousehold({ onJoined }: { onJoined: (householdId: stri
     setCreating(true);
     try {
       const household = await createHousehold({ name: name.trim(), address: address.trim() || undefined });
-      onJoined(household.id);
+      await onJoined(household.id);
     } catch (err) {
       setCreateError(errorMessage(err, 'Failed to create household'));
     } finally {
@@ -42,7 +45,7 @@ export default function NoHousehold({ onJoined }: { onJoined: (householdId: stri
     setJoining(true);
     try {
       const result = await joinHousehold(code.trim());
-      onJoined(result.householdId);
+      await onJoined(result.householdId);
     } catch (err) {
       setJoinError(errorMessage(err, 'Failed to join household'));
     } finally {
@@ -50,61 +53,83 @@ export default function NoHousehold({ onJoined }: { onJoined: (householdId: stri
     }
   };
 
+  const panel = 'rounded-2xl border border-slate-200 bg-white p-6 shadow-card dark:border-slate-800 dark:bg-slate-900';
+
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="mx-auto max-w-4xl animate-slide-up space-y-8">
       <div className="text-center">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Welcome to Roomies</h1>
-        <p className="mt-2 text-gray-600 dark:text-gray-400">Start a household for your place, or join the one your roommate already set up.</p>
+        <span className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-teal-600 text-white shadow-pop">
+          <HiOutlineHomeModern className="h-7 w-7" />
+        </span>
+        <h1 className="mt-5 text-3xl font-semibold tracking-tight text-slate-900 dark:text-white">{title}</h1>
+        <p className="mx-auto mt-2 max-w-md text-slate-500 dark:text-slate-400">Start a household for your place, or join the one a roommate already set up.</p>
       </div>
 
       <UserInvitationsList compact />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card title="Create a household">
-          <form onSubmit={handleCreate} className="space-y-4">
-            {createError && <Alert kind="error">{createError}</Alert>}
+      <div className="grid gap-6 md:grid-cols-2">
+        <form onSubmit={handleCreate} className={panel} noValidate>
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/40 dark:text-brand-300">
+              <HiOutlinePlus className="h-5 w-5" />
+            </span>
             <div>
-              <label htmlFor="household-name" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Household name
-              </label>
-              <input id="household-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} placeholder="e.g. 42 Maple Street" className={inputClass} />
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white">Create a household</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400">You become its admin.</p>
             </div>
-            <div>
-              <label htmlFor="household-address" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Address <span className="text-gray-400">(optional)</span>
-              </label>
-              <input id="household-address" value={address} onChange={(e) => setAddress(e.target.value)} maxLength={200} className={inputClass} />
-            </div>
-            <Button type="submit" variant="primary" fullWidth isLoading={creating} disabled={creating || !name.trim()}>
-              Create household
-            </Button>
-          </form>
-        </Card>
+          </div>
+          {createError && (
+            <Alert kind="error" className="mt-4">
+              {createError}
+            </Alert>
+          )}
+          <div className="mt-5 space-y-4">
+            <FormField label="Household name" htmlFor="household-name">
+              <Input id="household-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} placeholder="e.g. 42 Maple Street" autoComplete="off" />
+            </FormField>
+            <FormField label="Address" htmlFor="household-address" optional>
+              <Input id="household-address" value={address} onChange={(e) => setAddress(e.target.value)} maxLength={200} autoComplete="street-address" />
+            </FormField>
+          </div>
+          <Button type="submit" size="lg" fullWidth className="mt-6" isLoading={creating} disabled={!name.trim()}>
+            Create household
+          </Button>
+        </form>
 
-        <Card title="Join with a code">
-          <form onSubmit={handleJoin} className="space-y-4">
-            {joinError && <Alert kind="error">{joinError}</Alert>}
-            <p className="text-sm text-gray-600 dark:text-gray-400">Ask a household admin for the join code shown on their dashboard.</p>
+        <form onSubmit={handleJoin} className={panel} noValidate>
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-600 dark:bg-violet-900/40 dark:text-violet-300">
+              <HiOutlineKey className="h-5 w-5" />
+            </span>
             <div>
-              <label htmlFor="join-code" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Join code
-              </label>
-              <input
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white">Join with a code</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Ask an admin for the household join code.</p>
+            </div>
+          </div>
+          {joinError && (
+            <Alert kind="error" className="mt-4">
+              {joinError}
+            </Alert>
+          )}
+          <div className="mt-5">
+            <FormField label="Join code" htmlFor="join-code">
+              <Input
                 id="join-code"
                 value={code}
                 onChange={(e) => setCode(e.target.value.toUpperCase())}
                 required
                 maxLength={12}
                 placeholder="ABC123"
-                className={`${inputClass} font-mono tracking-widest uppercase`}
                 autoCapitalize="characters"
+                autoComplete="off"
+                className="h-14 text-center font-mono text-2xl uppercase tracking-[0.3em]"
               />
-            </div>
-            <Button type="submit" variant="secondary" fullWidth isLoading={joining} disabled={joining || code.trim().length < 4}>
-              Join household
-            </Button>
-          </form>
-        </Card>
+            </FormField>
+          </div>
+          <Button type="submit" size="lg" variant="secondary" fullWidth className="mt-6" isLoading={joining} disabled={code.trim().length < 4}>
+            Join household
+          </Button>
+        </form>
       </div>
     </div>
   );

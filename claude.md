@@ -97,6 +97,19 @@ export const GET = withAuthParams<{ id: string }>(async (request, { user, supaba
 - `<Avatar>` for profile pictures (initials fallback); avatars upload to storage `avatars/{uid}/…`.
 - Dates: expenses use `YYYY-MM-DD` strings; tasks use ISO timestamps (date-only input becomes noon UTC).
 
+### Design system (2026-09-05 redesign)
+- Palette: slate neutrals, `brand` = emerald (Tailwind alias), teal for gradients. Dark mode via the `dark:` class on every
+  component; never hard-code gray-*/blue-* colours.
+- Build screens from `src/components/ui/*`: `Button`/`ButtonLink` (variants primary|secondary|outline|ghost|danger|link),
+  `Card`, `Field` (`FormField`, `Input`, `Select`, `Textarea`, `Checkbox`), `Badge`, `Modal` (bottom sheet on phones),
+  `Menu` (kebab/dropdown), `Segmented` (filters/tabs), `EmptyState`, `PageHeader`, `Skeleton`, `Avatar`/`AvatarStack`, `Logo`.
+- Feedback: `useToast()` for outcomes, `useConfirm()` (promise-based dialog) before destructive actions. No `window.confirm`.
+- Every page calls `usePageTitle('…')`; household-scoped pages render `<HouseholdRequired>` when there is no household.
+- Shell: `(dashboard)/layout.tsx` has the desktop sidebar and, under `lg`, a top bar + bottom tab bar; content gets
+  `pb-24` on phones so the tab bar never covers it. Chat sizes itself with `calc(100dvh - 11rem)` for that reason.
+- Money always renders with `formatCurrency` and `tabular-nums`; dates with `relativeDay` (Today/Tomorrow/weekday) in lists.
+- Settle-up maths lives in `src/lib/settle.ts` (`planPayments`, `describePayment`) and is unit-tested.
+
 ---
 
 ## Local setup
@@ -113,6 +126,8 @@ npm run build
 ## Technical Debt Tracker
 
 ### Done (2026-09-05 overhaul)
+- [x] UI redesign: design system in `src/components/ui`, new landing/auth pages, app shell with mobile tabs, dashboard
+      (balance hero, onboarding checklist, recent expenses), expenses/tasks/chat/members/profile/settings rebuilt
 - [x] Web app aligned with the live schema (tasks, invitations, households.address, profiles, chat)
 - [x] Household creation / join-by-code / invitation link flows; current-household context
 - [x] Ledger-backed balances, share settling and settle-up plan; edits/deletes post reversals
@@ -129,6 +144,6 @@ npm run build
 - [x] Account deletion is a soft delete (profile anonymised, auth user scrubbed) because financial rows reference profiles with NO ACTION
 - [ ] Recurring expenses (`recurring_expenses`, `process_recurring_expenses_robust`) have no web UI
 - [ ] Notifications table is written but never shown in the web app
-- [ ] Automated tests (vitest for validation/serializers; a Playwright smoke run)
+- [ ] Automated tests: vitest covers validation/serializers/splits/settle; a Playwright smoke run is still missing
 
 *Last updated: 2026-09-05*

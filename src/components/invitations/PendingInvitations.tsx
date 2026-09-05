@@ -3,12 +3,17 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { HiOutlineClipboardDocument, HiOutlineEnvelope, HiOutlineTrash } from 'react-icons/hi2';
 import { errorMessage } from '@/lib/api-client';
 import { cancelInvitation, fetchHouseholdInvitations } from '@/lib/services/invitations';
-import { formatDate } from '@/lib/utils';
+import { relativeDay } from '@/lib/utils';
 import type { Invitation } from '@/types';
-import Button from '@/components/ui/Button';
 import Alert from '@/components/ui/Alert';
+import Button from '@/components/ui/Button';
+import { useConfirm } from '@/components/ui/Confirm';
+import EmptyState from '@/components/ui/EmptyState';
+import { SkeletonList } from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
 
 interface PendingInvitationsProps {
   householdId: string;
@@ -16,11 +21,12 @@ interface PendingInvitationsProps {
 }
 
 export default function PendingInvitations({ householdId, onRefresh }: PendingInvitationsProps) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -41,21 +47,28 @@ export default function PendingInvitations({ householdId, onRefresh }: PendingIn
     if (!invitation.token) return;
     try {
       await navigator.clipboard.writeText(`${window.location.origin}/invite?token=${invitation.token}`);
-      setCopiedId(invitation.id);
-      setTimeout(() => setCopiedId(null), 1500);
+      toast.success('Invitation link copied', `Send it to ${invitation.email}.`);
     } catch {
-      // ignore
+      toast.error('Could not copy the link');
     }
   };
 
   const cancel = async (invitation: Invitation) => {
-    if (!window.confirm(`Cancel the invitation for ${invitation.email}?`)) return;
+    const ok = await confirm({
+      title: `Cancel the invitation for ${invitation.email}?`,
+      description: 'Their link stops working immediately. You can always invite them again.',
+      confirmLabel: 'Cancel invitation',
+      cancelLabel: 'Keep it',
+      tone: 'danger',
+    });
+    if (!ok) return;
     setBusyId(invitation.id);
     setError('');
     try {
       await cancelInvitation(invitation.id);
       setInvitations((prev) => prev.filter((inv) => inv.id !== invitation.id));
       onRefresh?.();
+      toast.success('Invitation cancelled');
     } catch (err) {
       setError(errorMessage(err, 'Failed to cancel invitation'));
     } finally {
@@ -63,44 +76,48 @@ export default function PendingInvitations({ householdId, onRefresh }: PendingIn
     }
   };
 
-  if (loading) return <div className="py-4 text-center text-gray-500 dark:text-gray-400">Loading invitations…</div>;
+  if (loading) return <SkeletonList rows={2} />;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {error && (
         <Alert kind="error" onDismiss={() => setError('')}>
           {error}
         </Alert>
       )}
       {invitations.length === 0 ? (
-        <div className="py-4 text-center text-gray-500 dark:text-gray-400">No pending invitations</div>
+        <EmptyState compact icon={<HiOutlineEnvelope className="h-6 w-6" />} title="No pending invitations" description="Links you create show up here until they are accepted." />
       ) : (
-        invitations.map((invitation) => (
-          <div key={invitation.id} className="p-4 bg-white dark:bg-gray-800 rounded-md shadow border border-gray-200 dark:border-gray-700">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-medium text-gray-900 dark:text-white truncate">{invitation.email}</h3>
-                  <span className="px-2 py-0.5 text-xs rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">Pending</span>
-                </div>
-                <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  <p>Role: {invitation.role}</p>
-                  <p>Sent: {formatDate(invitation.createdAt, true)}</p>
-                  <p>Expires: {formatDate(invitation.expiresAt)}</p>
-                </div>
-                {invitation.message && <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-700 rounded text-sm italic text-gray-600 dark:text-gray-300">&ldquo;{invitation.message}&rdquo;</div>}
+        <ul className="space-y-2">
+          {invitations.map((invitation) => (
+            <li key={invitation.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+              <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                <HiOutlineEnvelope className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-slate-900 dark:text-white">{invitation.email}</p>
+                <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                  {invitation.role} · sent {relativeDay(invitation.createdAt)} · expires {relativeDay(invitation.expiresAt)}
+                </p>
+                {invitation.message && <p className="mt-1 truncate text-xs italic text-slate-500 dark:text-slate-400">&ldquo;{invitation.message}&rdquo;</p>}
               </div>
-              <div className="flex sm:flex-col gap-2">
-                <Button size="sm" variant="outline" disabled={!invitation.token} onClick={() => void copyLink(invitation)}>
-                  {copiedId === invitation.id ? 'Copied' : 'Copy link'}
-                </Button>
-                <Button size="sm" variant="danger" isLoading={busyId === invitation.id} disabled={busyId !== null} onClick={() => void cancel(invitation)}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          </div>
-        ))
+              <Button size="icon" variant="outline" aria-label={`Copy invitation link for ${invitation.email}`} disabled={!invitation.token} onClick={() => void copyLink(invitation)}>
+                <HiOutlineClipboardDocument className="h-4 w-4" />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={`Cancel invitation for ${invitation.email}`}
+                className="text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-900/30"
+                isLoading={busyId === invitation.id}
+                disabled={busyId !== null}
+                onClick={() => void cancel(invitation)}
+              >
+                <HiOutlineTrash className="h-4 w-4" />
+              </Button>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

@@ -2,11 +2,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { HiOutlineArrowPath, HiOutlineClipboardDocument, HiOutlineMapPin, HiOutlinePencilSquare } from 'react-icons/hi2';
 import { errorMessage } from '@/lib/api-client';
 import { regenerateJoinCode, updateHousehold } from '@/lib/services/households';
 import { formatDate } from '@/lib/utils';
 import type { Household, HouseholdRole } from '@/types';
 import Alert from '@/components/ui/Alert';
+import Button from '@/components/ui/Button';
+import Card from '@/components/ui/Card';
+import { useConfirm } from '@/components/ui/Confirm';
+import { FormField, Input } from '@/components/ui/Field';
+import Modal from '@/components/ui/Modal';
+import { useToast } from '@/components/ui/Toast';
 
 interface HouseholdInfoProps {
   household: Household;
@@ -15,18 +22,16 @@ interface HouseholdInfoProps {
   onUpdated?: (household: Household) => void;
 }
 
-const inputClass =
-  'bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 w-full text-gray-900 dark:text-white';
-
 export default function HouseholdInfo({ household, role, memberCount, onUpdated }: HouseholdInfoProps) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const isAdmin = role === 'admin';
-  const [isEditing, setIsEditing] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [name, setName] = useState(household.name);
   const [address, setAddress] = useState(household.address ?? '');
   const [joinCode, setJoinCode] = useState(household.joinCode ?? null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [rotating, setRotating] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -35,28 +40,45 @@ export default function HouseholdInfo({ household, role, memberCount, onUpdated 
     setJoinCode(household.joinCode ?? null);
   }, [household.name, household.address, household.joinCode]);
 
-  const handleSave = async () => {
-    setIsSubmitting(true);
+  const closeEditor = () => {
+    setEditing(false);
+    setName(household.name);
+    setAddress(household.address ?? '');
+    setError('');
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
     setError('');
     try {
       const updated = await updateHousehold(household.id, { name: name.trim(), address: address.trim() || null });
-      setIsEditing(false);
+      setEditing(false);
       onUpdated?.(updated);
+      toast.success('Household updated');
     } catch (err) {
       setError(errorMessage(err, 'Failed to update household'));
     } finally {
-      setIsSubmitting(false);
+      setSaving(false);
     }
   };
 
   const handleRotate = async () => {
+    if (joinCode) {
+      const ok = await confirm({
+        title: 'Generate a new join code?',
+        description: 'The current code stops working immediately. Anyone you already gave it to will need the new one.',
+        confirmLabel: 'New code',
+      });
+      if (!ok) return;
+    }
     setRotating(true);
-    setError('');
     try {
       const { joinCode: next } = await regenerateJoinCode(household.id);
       setJoinCode(next);
+      toast.success('New join code ready');
     } catch (err) {
-      setError(errorMessage(err, 'Failed to regenerate join code'));
+      toast.error(errorMessage(err, 'Failed to generate a join code'));
     } finally {
       setRotating(false);
     }
@@ -66,94 +88,89 @@ export default function HouseholdInfo({ household, role, memberCount, onUpdated 
     if (!joinCode) return;
     try {
       await navigator.clipboard.writeText(joinCode);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      toast.success('Join code copied');
     } catch {
-      // Clipboard unavailable (insecure context); the code is still visible to copy by hand.
+      toast.error('Could not copy', 'Select the code and copy it by hand.');
     }
   };
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-      {error && (
-        <Alert kind="error" className="mb-4" onDismiss={() => setError('')}>
-          {error}
-        </Alert>
-      )}
-
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div className="flex-1 min-w-0">
-          {isEditing ? (
-            <div className="space-y-3">
-              <div>
-                <label htmlFor="household-name" className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-                  Name
-                </label>
-                <input id="household-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} className={`${inputClass} text-xl font-bold`} />
-              </div>
-              <div>
-                <label htmlFor="household-address" className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-                  Address
-                </label>
-                <input id="household-address" value={address} onChange={(e) => setAddress(e.target.value)} maxLength={200} className={inputClass} placeholder="Optional" />
-              </div>
-            </div>
-          ) : (
-            <>
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white truncate">{household.name}</h2>
-              <p className="text-gray-600 dark:text-gray-300">{household.address || <span className="text-gray-400">No address yet</span>}</p>
-              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                {memberCount} {memberCount === 1 ? 'member' : 'members'} · created {formatDate(household.createdAt)}
-              </p>
-            </>
-          )}
-        </div>
+    <>
+      <Card
+        title={
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wider text-brand-600 dark:text-brand-400">Household</p>
+            <h3 className="truncate text-lg font-semibold text-slate-900 dark:text-white">{household.name}</h3>
+          </div>
+        }
+        actions={
+          isAdmin && (
+            <Button variant="ghost" size="sm" leftIcon={<HiOutlinePencilSquare className="h-4 w-4" />} onClick={() => setEditing(true)}>
+              Edit
+            </Button>
+          )
+        }
+      >
+        <p className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
+          <HiOutlineMapPin className="mt-0.5 h-4 w-4 flex-shrink-0 text-slate-400" />
+          <span>{household.address || <span className="text-slate-400">No address yet</span>}</span>
+        </p>
+        <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+          <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60">
+            <dt className="text-xs text-slate-500 dark:text-slate-400">Members</dt>
+            <dd className="mt-0.5 text-base font-semibold text-slate-900 dark:text-white">{memberCount}</dd>
+          </div>
+          <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60">
+            <dt className="text-xs text-slate-500 dark:text-slate-400">Created</dt>
+            <dd className="mt-0.5 text-base font-semibold text-slate-900 dark:text-white">{formatDate(household.createdAt)}</dd>
+          </div>
+        </dl>
 
         {isAdmin && (
-          <div className="flex gap-2 flex-shrink-0">
-            {isEditing && (
-              <button
-                type="button"
-                onClick={() => {
-                  setIsEditing(false);
-                  setName(household.name);
-                  setAddress(household.address ?? '');
-                }}
-                disabled={isSubmitting}
-                className="px-4 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
-              >
-                Cancel
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => (isEditing ? void handleSave() : setIsEditing(true))}
-              disabled={isSubmitting || (isEditing && !name.trim())}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed"
-            >
-              {isSubmitting ? 'Saving…' : isEditing ? 'Save' : 'Edit'}
-            </button>
+          <div className="mt-4 rounded-xl border border-dashed border-brand-300 bg-brand-50/60 p-4 dark:border-brand-800 dark:bg-brand-900/20">
+            <p className="text-sm font-medium text-slate-900 dark:text-white">Join code</p>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Roommates enter this on their dashboard to join instantly.</p>
+            <div className="mt-3 flex items-center gap-2">
+              <code className="flex-1 truncate rounded-lg bg-white px-3 py-2 text-center font-mono text-lg font-semibold tracking-[0.25em] text-slate-900 shadow-sm dark:bg-slate-900 dark:text-white">
+                {joinCode ?? '——'}
+              </code>
+              <Button variant="outline" size="icon" aria-label="Copy join code" onClick={() => void copyCode()} disabled={!joinCode}>
+                <HiOutlineClipboardDocument className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="icon" aria-label={joinCode ? 'Generate a new join code' : 'Generate a join code'} onClick={() => void handleRotate()} isLoading={rotating}>
+                <HiOutlineArrowPath className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         )}
-      </div>
+      </Card>
 
-      {isAdmin && (
-        <div className="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center gap-3">
-          <div className="flex-1">
-            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Join code</p>
-            <p className="text-sm text-gray-600 dark:text-gray-300">Roommates can enter this code on their dashboard to join instantly.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <code className="px-3 py-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-lg font-mono tracking-widest text-gray-900 dark:text-white">{joinCode ?? '——'}</code>
-            <button type="button" onClick={() => void copyCode()} disabled={!joinCode} className="text-sm text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50">
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-            <button type="button" onClick={() => void handleRotate()} disabled={rotating} className="text-sm text-gray-500 dark:text-gray-400 hover:underline disabled:opacity-50">
-              {rotating ? 'Rotating…' : joinCode ? 'New code' : 'Generate'}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+      <Modal
+        open={editing}
+        onClose={closeEditor}
+        title="Edit household"
+        dismissible={!saving}
+        footer={
+          <>
+            <Button variant="outline" onClick={closeEditor} disabled={saving}>
+              Cancel
+            </Button>
+            <Button type="submit" form="household-edit-form" isLoading={saving} disabled={!name.trim()}>
+              Save changes
+            </Button>
+          </>
+        }
+      >
+        <form id="household-edit-form" onSubmit={handleSave} className="space-y-4" noValidate>
+          {error && <Alert kind="error">{error}</Alert>}
+          <FormField label="Name" htmlFor="edit-household-name">
+            <Input id="edit-household-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required autoFocus />
+          </FormField>
+          <FormField label="Address" htmlFor="edit-household-address" optional>
+            <Input id="edit-household-address" value={address} onChange={(e) => setAddress(e.target.value)} maxLength={200} autoComplete="street-address" />
+          </FormField>
+        </form>
+      </Modal>
+    </>
   );
 }
