@@ -16,7 +16,7 @@ npm run dev                  # http://localhost:3000
 |---|---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | yes | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | Public anon key (RLS applies) |
-| `SUPABASE_SERVICE_ROLE_KEY` | recommended | Server-only. Account deletion and invitation lookups for people who are not signed in yet |
+| `SUPABASE_SERVICE_ROLE_KEY` | for account deletion | Server-only. GoTrue soft-delete of the auth user; invite links work without it |
 | `NEXT_PUBLIC_APP_URL` | no | Origin used in invitation links (defaults to the request origin) |
 
 `npm run check` runs the type checker and the linter; `npm run build` produces the production bundle.
@@ -28,7 +28,8 @@ npm run dev                  # http://localhost:3000
 - **Money**: every expense, settlement and edit is posted to `ledger_entries` (immutable; corrections are reversal rows). Balances come from `get_household_balances_simple`. The RPCs the web app uses live in `supabase/migrations/20260905000100_web_ledger_rpcs.sql` and all check `auth.uid()` membership.
 - **Tasks**: the `tasks` table (not the chores engine, which other clients use).
 - **Chat**: `messages` table + Realtime.
-- **Authorization**: RLS on every table, plus explicit checks in the API routes. `SECURITY DEFINER` functions are not executable by `anon`, and household-scoped ones assert membership (`web_assert_member`).
+- **Authorization**: RLS on every table, plus explicit checks in the API routes. `SECURITY DEFINER` functions are not executable by `anon` (except the invitation-token functions, where the token is the secret), and household-scoped ones assert membership (`web_assert_member`).
+- **Account deletion**: financial rows reference profiles with NO ACTION, so deletion is a soft delete: `web_prepare_account_deletion()` anonymises the profile and detaches memberships, then the auth user is soft-deleted through the admin API.
 
 ### Layout
 

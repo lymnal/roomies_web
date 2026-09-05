@@ -1,10 +1,13 @@
 // src/app/api/invitations/[id]/route.ts
 //
 // One path, two identifiers:
-//   GET  /api/invitations/<token>   public  - look an invitation up from an invite link
-//   POST /api/invitations/<token>   public* - accept (needs a session) or decline
+//   GET  /api/invitations/<token>   public - look an invitation up from an invite link
+//   POST /api/invitations/<token>   public - decline; accept needs a session
 //   PATCH  /api/invitations/<id>    signed-in recipient accepts/declines from the dashboard
 //   DELETE /api/invitations/<id>    household admin cancels
+//
+// The token flows run through SECURITY DEFINER functions (the token is the secret), so the web
+// server never needs the service-role key.
 import { NextRequest, NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -17,42 +20,55 @@ import {
   requireMembership,
   requireUuid,
   isUuid,
-  HttpError,
   type RouteContext,
 } from '@/lib/supabase-server';
-import { getSupabaseAdmin, hasSupabaseAdmin } from '@/lib/supabase-admin';
 import { INVITATION_SELECT, toInvitation, type InvitationRow } from '@/lib/serializers';
 import { fetchInvitationById } from '@/lib/queries';
 import type { Invitation } from '@/types';
 
 type Params = { id: string };
 
-/** Token lookups bypass RLS (the token *is* the secret); fall back to the session client. */
-async function tokenClient(session: SupabaseClient): Promise<SupabaseClient> {
-  return hasSupabaseAdmin() ? getSupabaseAdmin() : session;
+interface TokenInvitation {
+  id: string;
+  email: string;
+  household_id: string;
+  role: 'admin' | 'member';
+  status: Invitation['status'];
+  message: string | null;
+  expires_at: string;
+  created_at: string;
+  accepted_at: string | null;
+  household: { id: string; name: string; address: string | null } | null;
+  inviter: { id: string; name: string | null; email: string | null; avatar_url: string | null } | null;
 }
 
-async function findByToken(client: SupabaseClient, token: string): Promise<Invitation | null> {
-  const { data, error } = await client.from('invitations').select(INVITATION_SELECT).eq('token', token).maybeSingle();
-  if (error) {
-    console.error('[api] invitation lookup failed:', error);
-    throw new HttpError(500, 'Failed to load invitation');
-  }
-  return data ? toInvitation(data as unknown as InvitationRow) : null;
+function fromToken(row: TokenInvitation): Invitation {
+  return {
+    id: row.id,
+    email: row.email,
+    householdId: row.household_id,
+    role: row.role,
+    status: row.status,
+    message: row.message,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    acceptedAt: row.accepted_at,
+    household: row.household,
+    inviter: row.inviter
+      ? { id: row.inviter.id, name: row.inviter.name?.trim() || 'Unknown', email: row.inviter.email, avatar: row.inviter.avatar_url }
+      : null,
+  };
 }
 
-function isExpired(invitation: Invitation): boolean {
-  return new Date(invitation.expiresAt).getTime() < Date.now();
+async function lookupByToken(supabase: SupabaseClient, token: string): Promise<Invitation | null | NextResponse> {
+  const { data, error } = await supabase.rpc('get_invitation_by_token', { p_token: token });
+  if (error) return dbErrorResponse(error, 'Failed to load invitation');
+  return data ? fromToken(data as TokenInvitation) : null;
 }
 
-async function markExpired(client: SupabaseClient, invitationId: string) {
-  await client.from('invitations').update({ status: 'expired', updated_at: new Date().toISOString() }).eq('id', invitationId);
-}
-
-/** 410 responses for invitations that can no longer be acted on, or null if it is still pending. */
-async function unusableResponse(client: SupabaseClient, invitation: Invitation): Promise<NextResponse | null> {
-  if (invitation.status === 'pending' && isExpired(invitation)) {
-    await markExpired(client, invitation.id);
+/** 410 for invitations that can no longer be acted on, or null while still pending. */
+function unusableResponse(invitation: Invitation): NextResponse | null {
+  if (invitation.status === 'pending' && new Date(invitation.expiresAt).getTime() < Date.now()) {
     return NextResponse.json({ error: 'This invitation has expired', status: 'expired' }, { status: 410 });
   }
   if (invitation.status !== 'pending') {
@@ -70,26 +86,12 @@ export async function GET(_request: NextRequest, context: RouteContext<Params>) 
     const { id: token } = await context.params;
     if (!isUuid(token)) return errorResponse('Invalid invitation link', 400);
 
-    const session = await createSupabaseServerClient();
-    const client = await tokenClient(session);
-    const invitation = await findByToken(client, token);
+    const supabase = await createSupabaseServerClient();
+    const result = await lookupByToken(supabase, token);
+    if (result instanceof NextResponse) return result;
+    if (!result) return errorResponse('Invitation not found', 404);
 
-    if (!invitation) {
-      if (!hasSupabaseAdmin()) {
-        const {
-          data: { user },
-        } = await session.auth.getUser();
-        if (!user) {
-          return NextResponse.json({ error: 'Sign in to view this invitation', requiresAuth: true }, { status: 401 });
-        }
-      }
-      return errorResponse('Invitation not found', 404);
-    }
-
-    const unusable = await unusableResponse(client, invitation);
-    if (unusable) return unusable;
-
-    return NextResponse.json(invitation);
+    return unusableResponse(result) ?? NextResponse.json(result);
   } catch (error) {
     return handleRouteError(error);
   }
@@ -108,65 +110,34 @@ export async function POST(request: NextRequest, context: RouteContext<Params>) 
     if (!action) return errorResponse('action must be accept or decline', 400);
     const claimWithCurrentEmail = body.claimWithCurrentEmail === true;
 
-    const session = await createSupabaseServerClient();
-    const client = await tokenClient(session);
-    const invitation = await findByToken(client, token);
-    if (!invitation) return errorResponse('Invitation not found', 404);
+    const supabase = await createSupabaseServerClient();
 
-    const unusable = await unusableResponse(client, invitation);
-    if (unusable) return unusable;
+    if (action === 'accept') {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        const existing = await lookupByToken(supabase, token);
+        const email = existing && !(existing instanceof NextResponse) ? existing.email : undefined;
+        return NextResponse.json({ error: 'Sign in to accept this invitation', requiresAuth: true, email }, { status: 401 });
+      }
+    }
 
-    if (action === 'decline') {
-      const { error } = await client
-        .from('invitations')
-        .update({ status: 'rejected', updated_at: new Date().toISOString() })
-        .eq('id', invitation.id);
-      if (error) return dbErrorResponse(error, 'Failed to decline invitation');
+    const { data, error } = await supabase.rpc('respond_to_invitation_by_token', {
+      p_token: token,
+      p_action: action,
+      p_claim: claimWithCurrentEmail,
+    });
+    if (error) return dbErrorResponse(error, 'Failed to respond to invitation');
+
+    const result = data as { status: string; household_id?: string; household_name?: string | null; already_member?: boolean };
+    if (result.status === 'rejected') {
       return NextResponse.json({ message: 'Invitation declined' });
     }
-
-    const {
-      data: { user },
-    } = await session.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Sign in to accept this invitation', requiresAuth: true, email: invitation.email }, { status: 401 });
-    }
-
-    const emailMatches = (user.email ?? '').toLowerCase() === invitation.email.toLowerCase();
-    if (!emailMatches && !claimWithCurrentEmail) {
-      return errorResponse('This invitation was sent to a different email address', 403);
-    }
-
-    const acceptedUpdate = {
-      status: 'accepted',
-      accepted_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      ...(emailMatches ? {} : { notes: `Claimed by ${user.email} (original recipient: ${invitation.email})` }),
-    };
-
-    const { data: existingMembership } = await session
-      .from('household_members')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('household_id', invitation.householdId)
-      .maybeSingle();
-
-    if (!existingMembership) {
-      const { error: joinError } = await session.from('household_members').insert({
-        user_id: user.id,
-        household_id: invitation.householdId,
-        role: invitation.role,
-      });
-      if (joinError) return dbErrorResponse(joinError, 'Failed to join household');
-    }
-
-    const { error: updateError } = await client.from('invitations').update(acceptedUpdate).eq('id', invitation.id);
-    if (updateError) console.error('[api] invitation accepted but status update failed:', updateError);
-
     return NextResponse.json({
-      message: existingMembership ? 'You are already a member of this household' : 'You joined the household',
-      householdId: invitation.householdId,
-      householdName: invitation.household?.name ?? null,
+      message: result.already_member ? 'You are already a member of this household' : 'You joined the household',
+      householdId: result.household_id,
+      householdName: result.household_name ?? null,
       redirectTo: '/dashboard',
     });
   } catch (error) {
@@ -189,8 +160,13 @@ export const PATCH = withAuthParams<Params>(async (request, { user, supabase, pa
   if ((user.email ?? '').toLowerCase() !== invitation.email.toLowerCase()) {
     return errorResponse('You can only respond to invitations sent to you', 403);
   }
-  const unusable = await unusableResponse(supabase, invitation);
-  if (unusable) return unusable;
+  const unusable = unusableResponse(invitation);
+  if (unusable) {
+    if (invitation.status === 'pending') {
+      await supabase.from('invitations').update({ status: 'expired', updated_at: new Date().toISOString() }).eq('id', invitationId);
+    }
+    return unusable;
+  }
 
   if (status === 'accepted') {
     const { data: existingMembership } = await supabase

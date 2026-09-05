@@ -92,46 +92,25 @@ export const PATCH = withAuth(async (request, { user, supabase }) => {
   return NextResponse.json({ id: data?.id, name: data?.name, email: data?.email, avatar: data?.avatar_url ?? null, phone: data?.phone ?? null });
 });
 
-// DELETE /api/users/me - delete the account (auth user; profile and memberships cascade)
+// DELETE /api/users/me - delete the account.
+// Financial history (splits, settlements, ledger rows) references the profile with NO ACTION, so a
+// hard delete is impossible once the user has any. Instead: the database function detaches the user
+// from households and anonymises the profile, then GoTrue soft-deletes the auth user (credentials
+// scrubbed, cannot sign in again). The soft delete needs the service-role key.
 export const DELETE = withAuth(async (_request, { user, supabase }) => {
-  // Refuse while the user is the only admin of a household that still has other members.
-  const { data: adminMemberships, error } = await supabase
-    .from('household_members')
-    .select('household_id, household:households!household_id(id, name)')
-    .eq('user_id', user.id)
-    .eq('role', 'admin');
-  if (error) return dbErrorResponse(error, 'Failed to check household admin status');
-
-  const blocking: string[] = [];
-  for (const membership of (adminMemberships ?? []) as unknown as MembershipRow[]) {
-    const [total, otherAdmins] = await Promise.all([
-      countRows(supabase, 'household_members', { household_id: membership.household_id }),
-      countRows(supabase, 'household_members', { household_id: membership.household_id, role: 'admin' }, (q) =>
-        q.neq('user_id', user.id)
-      ),
-    ]);
-    if (total > 1 && otherAdmins === 0) {
-      blocking.push(one(membership.household)?.name ?? membership.household_id);
-    }
-  }
-  if (blocking.length > 0) {
-    return NextResponse.json(
-      {
-        error: 'You are the only admin of a household that still has other members. Promote someone else first.',
-        households: blocking,
-      },
-      { status: 400 }
-    );
-  }
-
   if (!hasSupabaseAdmin()) {
     return errorResponse('Account deletion is not configured on this server (SUPABASE_SERVICE_ROLE_KEY missing)', 501);
   }
 
-  const { error: deleteError } = await getSupabaseAdmin().auth.admin.deleteUser(user.id);
+  const { error } = await supabase.rpc('web_prepare_account_deletion');
+  if (error) return dbErrorResponse(error, 'Failed to delete your account');
+
+  const { error: deleteError } = await getSupabaseAdmin().auth.admin.deleteUser(user.id, true);
   if (deleteError) {
-    console.error('[api] failed to delete auth user:', deleteError);
-    return errorResponse('Failed to delete your account', 500);
+    console.error('[api] soft-deleting auth user failed:', deleteError);
+    return errorResponse('Your profile was anonymised but the sign-in record could not be removed. Please contact support.', 500);
   }
+
+  await supabase.auth.signOut();
   return NextResponse.json({ message: 'Your account has been deleted' });
 });

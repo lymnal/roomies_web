@@ -68,6 +68,8 @@ export function dbErrorResponse(error: PostgrestLikeError, fallback = 'Database 
     case 'P0002':
     case 'PGRST116':
       return errorResponse(message, 404);
+    case 'P0003':
+      return errorResponse(message, 410);
     case '23505':
       return errorResponse(message, 409);
     case 'P0001':

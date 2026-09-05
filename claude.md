@@ -60,6 +60,8 @@ src/
 | `web_settle_split(split_id, settled)` | marks a share paid/unpaid and records the settlement in the ledger |
 | `create_settlement_simple(...)` | direct "A paid B" settlement (existing, has checks) |
 | `get_household_balances_simple(id)` | ledger balances (existing, has checks) |
+| `get_invitation_by_token / respond_to_invitation_by_token` | invite-link flows for visitors without a session (anon-callable; the token is the secret) |
+| `web_prepare_account_deletion()` | soft account deletion: detach memberships, anonymise profile; API then soft-deletes the auth user |
 | `web_assert_member(household_id)` | guard inserted into every household-scoped SECURITY DEFINER function |
 | `on_auth_user_created → handle_new_user()` | creates `profiles`; **never insert profiles from the app** |
 
@@ -82,7 +84,7 @@ export const GET = withAuthParams<{ id: string }>(async (request, { user, supaba
 ```
 - Validate bodies in `src/lib/validation.ts`; throw `HttpError(400, message)` with a user-facing message.
 - Never use the service-role client before the route has done its own authorization; it is only needed for
-  invitation-by-token lookups (anonymous visitors) and account deletion.
+  the GoTrue soft delete in account deletion. Invitation-token flows are database functions.
 - Money mutations go through the `web_*` RPCs, never direct table writes. `ledger_entries` is immutable: corrections
   are `reversal` rows (`web_zero_ledger_reference`).
 - Responses use the camelCase shapes in `src/types`; map rows with `src/lib/serializers.ts`.
@@ -123,7 +125,7 @@ npm run build
 - [ ] **Dashboard-only**: enable leaked-password protection (Authentication → Settings) and upgrade Postgres 15.8.1.094 (Settings → Infrastructure; brief downtime)
 - [ ] Invitation emails are not sent; admins share the link / join code (wire Resend or Supabase SMTP)
 - [ ] Extensions `vector`, `pg_trgm`, `fuzzystrmatch` live in `public` (advisor warning; move to `extensions` only with the other client's functions checked)
-- [ ] `expenses.paid_by` and `household_members.user_id` cascade-delete with `auth.users`; deleting a user who paid for expenses removes those expenses while their ledger rows remain (consider soft-deleting users)
+- [x] Account deletion is a soft delete (profile anonymised, auth user scrubbed) because financial rows reference profiles with NO ACTION
 - [ ] Recurring expenses (`recurring_expenses`, `process_recurring_expenses_robust`) have no web UI
 - [ ] Notifications table is written but never shown in the web app
 - [ ] Automated tests (vitest for validation/serializers; a Playwright smoke run)
