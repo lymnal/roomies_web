@@ -22,7 +22,7 @@
 ### Tech Stack
 - **Frontend**: Next.js 15 (App Router), React 19, TailwindCSS (dark mode via `next-themes`, class strategy)
 - **Backend**: Next.js Route Handlers + Supabase (Postgres, Auth, Realtime, Storage)
-- **Database**: Supabase project `utpjefooygaqdhpgzxjy` ("roomiesapp"). RLS on every table.
+- **Database**: Supabase project `utpjefooygaqdhpgzxjy` ("roomiesapp"), Postgres 17.6, Free plan. RLS on every table.
 
 ### Source of truth for the schema
 The hosted database is the truth; **every change goes through `supabase/migrations/*.sql`** (apply via the Supabase MCP `apply_migration` or the SQL editor, then commit the file). Run the security advisor after DDL.
@@ -122,7 +122,8 @@ npm run build
 - [x] Avatars storage bucket + policies; dark mode actually toggles; strict eslint; migrations committed
 
 ### Open
-- [ ] **Dashboard-only**: enable leaked-password protection (Authentication → Settings) and upgrade Postgres 15.8.1.094 (Settings → Infrastructure; brief downtime)
+- [x] Postgres upgraded 15.8.1.094 → 17.6.1.166 on 2026-09-05 (pgjwt had to be dropped first); extensions now vector 0.8.2 / pg_trgm 1.6 / pgcrypto 1.3
+- [ ] Leaked-password protection (HIBP) needs the Pro plan; min password length is 8 in Auth settings to match the app
 - [ ] Invitation emails are not sent; admins share the link / join code (wire Resend or Supabase SMTP)
 - [ ] Extensions `vector`, `pg_trgm`, `fuzzystrmatch` live in `public` (advisor warning; move to `extensions` only with the other client's functions checked)
 - [x] Account deletion is a soft delete (profile anonymised, auth user scrubbed) because financial rows reference profiles with NO ACTION

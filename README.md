@@ -54,4 +54,4 @@ supabase/migrations/    # SQL applied to the hosted project (keep in sync)
 
 Apply new SQL through the Supabase MCP / SQL editor **and** add the file under `supabase/migrations/` so the repo stays the source of truth. Run the Supabase security advisor afterwards.
 
-Two items can only be done in the Supabase dashboard: enable leaked-password protection (Authentication → Settings) and upgrade Postgres (Settings → Infrastructure).
+Leaked-password protection (HaveIBeenPwned check) is a Pro-plan feature; the project currently runs on the Free plan with an 8-character minimum password.
